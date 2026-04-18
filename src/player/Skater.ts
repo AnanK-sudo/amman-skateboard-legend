@@ -44,13 +44,20 @@ export class Skater {
   private trickDuration = 0.4;
 
   // Smooth motion state
-  private animTime = 0;           // continuous timer for idle/ride animations
-  private currentLean = 0;        // smoothed lean angle (for turning)
-  private currentTilt = 0;        // smoothed forward/back tilt
-  private pushPhase = 0;          // push leg animation phase
-  private isPushing = false;      // true during push kick
+  private animTime = 0;
+  private currentLean = 0;
+  private currentTilt = 0;
+  private pushPhase = 0;
+  private isPushing = false;
+
+  // Ground following
+  private world: CANNON.World;
+  private groundY = 0;            // current ground height below skater
+  private verticalVel = 0;        // manual vertical velocity for jumping
+  private airborne = false;
 
   constructor(world: CANNON.World, spawn?: { x: number; y: number; z: number }) {
+    this.world = world;
     this.body = new CANNON.Body({
       mass: 70,
       shape: new CANNON.Box(new CANNON.Vec3(0.3, 0.9, 0.15)),
@@ -138,7 +145,7 @@ export class Skater {
     const p = this.body.position;
     return new THREE.Vector3(p.x, p.y, p.z);
   }
-  get isGrounded(): boolean { return this.body.position.y < 1.1; }
+  get isGrounded(): boolean { return !this.airborne; }
   get speed(): number { return this._speed; }
 
   playTrick(trick: TrickAnim): void {
@@ -186,13 +193,60 @@ export class Skater {
       this.pushPhase += delta * 4; // 4 pushes per second at full speed
     }
 
-    // --- Move body ---
+    // --- Move body horizontally ---
     this.body.position.x += forward.x * this._speed * delta;
     this.body.position.z += forward.z * this._speed * delta;
 
-    // Ollie
-    if (input.ollie && this.isGrounded) {
-      this.body.velocity.y = this.ollieImpulse;
+    // --- Ground following via raycast ---
+    const rayFrom = new CANNON.Vec3(this.body.position.x, this.body.position.y + 2, this.body.position.z);
+    const rayTo = new CANNON.Vec3(this.body.position.x, this.body.position.y - 5, this.body.position.z);
+    const rayResult = new CANNON.RaycastResult();
+    const hasHit = this.world.raycastClosest(rayFrom, rayTo, { skipBackfaces: true }, rayResult);
+
+    if (hasHit && rayResult.hitPointWorld) {
+      this.groundY = rayResult.hitPointWorld.y;
+    } else {
+      this.groundY = 0; // fallback to flat ground
+    }
+
+    const feetHeight = this.groundY + 0.9; // half-height of physics box
+
+    // Ollie / jumping
+    if (input.ollie && !this.airborne) {
+      this.verticalVel = this.ollieImpulse;
+      this.airborne = true;
+    }
+
+    if (this.airborne) {
+      // Apply gravity manually
+      this.verticalVel -= 9.82 * delta * 2; // 2x gravity for snappy feel
+      this.body.position.y += this.verticalVel * delta;
+
+      // Land when below ground
+      if (this.body.position.y <= feetHeight) {
+        this.body.position.y = feetHeight;
+        this.verticalVel = 0;
+        this.airborne = false;
+      }
+    } else {
+      // Stick to ground — smoothly follow terrain height
+      const targetY = feetHeight;
+      const currentY = this.body.position.y;
+      // If ground drops away (e.g. edge of ramp), become airborne
+      if (currentY - targetY > 0.3) {
+        this.airborne = true;
+        this.verticalVel = 0;
+      } else {
+        this.body.position.y = this.lerp(currentY, targetY, 15, delta);
+      }
+    }
+
+    // Prevent falling through the world
+    if (this.body.position.y < -10) {
+      this.body.position.set(0, 2, 0);
+      this._speed = 0;
+      this.verticalVel = 0;
+      this.airborne = false;
     }
 
     // --- Smooth body motion (only when NOT doing a trick) ---

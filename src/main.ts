@@ -44,7 +44,7 @@ scene.add(new THREE.HemisphereLight(0x8888ff, 0x444422, 0.5));
 
 // --- Physics ---
 const physics = new PhysicsWorld();
-physics.createGroundPlane(); // Global infinite ground for skater to stand on
+// Ground plane provided by each zone (with proper physics bodies for raycasting)
 
 // --- Zone System ---
 const zoneManager = new ZoneManager(scene, physics.world);
