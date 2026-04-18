@@ -32,6 +32,8 @@ export class Stairs {
 
       const geo = new THREE.BoxGeometry(stepW, stepH, stepD);
       const mesh = new THREE.Mesh(geo, mat);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
 
       // Position: step i sits at depth offset i * STEP_DEPTH, vertically centered at stepH/2
       const localX = 0;

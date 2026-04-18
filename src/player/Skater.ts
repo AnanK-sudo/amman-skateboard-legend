@@ -50,11 +50,18 @@ export class Skater {
   private pushPhase = 0;
   private isPushing = false;
 
+  // Named constants for ground following
+  private readonly HALF_HEIGHT = 0.9;
+  private readonly AIRBORNE_THRESHOLD = 0.3;
+
   // Ground following
   private world: CANNON.World;
   private groundY = 0;            // current ground height below skater
   private verticalVel = 0;        // manual vertical velocity for jumping
   private airborne = false;
+
+  // Reusable Vector3 for position getter
+  private _positionVec = new THREE.Vector3();
 
   constructor(world: CANNON.World, spawn?: { x: number; y: number; z: number }) {
     this.world = world;
@@ -143,7 +150,7 @@ export class Skater {
   get yaw(): number { return this._yaw; }
   get position(): THREE.Vector3 {
     const p = this.body.position;
-    return new THREE.Vector3(p.x, p.y, p.z);
+    return this._positionVec.set(p.x, p.y, p.z);
   }
   get isGrounded(): boolean { return !this.airborne; }
   get speed(): number { return this._speed; }
@@ -216,7 +223,7 @@ export class Skater {
       this.groundY = 0;
     }
 
-    const feetHeight = this.groundY + 0.9; // half-height of physics box
+    const feetHeight = this.groundY + this.HALF_HEIGHT; // half-height of physics box
 
     // Ollie / jumping
     if (input.ollie && !this.airborne) {
@@ -240,7 +247,7 @@ export class Skater {
       const targetY = feetHeight;
       const currentY = this.body.position.y;
       // If ground drops away (e.g. edge of ramp), become airborne
-      if (currentY - targetY > 0.3) {
+      if (currentY - targetY > this.AIRBORNE_THRESHOLD) {
         this.airborne = true;
         this.verticalVel = 0;
       } else {
@@ -408,7 +415,7 @@ export class Skater {
     }
 
     // Sync mesh to physics
-    this.mesh.position.set(this.body.position.x, this.body.position.y - 0.9, this.body.position.z);
+    this.mesh.position.set(this.body.position.x, this.body.position.y - this.HALF_HEIGHT, this.body.position.z);
     this.mesh.rotation.y = this._yaw;
   }
 }

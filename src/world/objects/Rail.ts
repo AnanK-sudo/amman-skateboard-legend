@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
 import { createNeonMaterial } from '@/shaders/GraffitiMaterial';
+import { addOutline } from '@/shaders/OutlineShader';
 
 export interface RailConfig {
   position: THREE.Vector3;
@@ -31,6 +32,9 @@ export class Rail {
     railGeo.rotateZ(Math.PI / 2); // lay along X axis
     const railMesh = new THREE.Mesh(railGeo, railMat);
     railMesh.position.set(0, 0, 0);
+    railMesh.castShadow = true;
+    railMesh.receiveShadow = true;
+    addOutline(railMesh, 0x000000, 0.02);
     this.mesh.add(railMesh);
 
     // Two support posts
@@ -40,6 +44,8 @@ export class Rail {
     for (const xOffset of postOffsets) {
       const post = new THREE.Mesh(postGeo, postMat);
       post.position.set(xOffset, -postHeight / 2, 0);
+      post.castShadow = true;
+      post.receiveShadow = true;
       this.mesh.add(post);
     }
 

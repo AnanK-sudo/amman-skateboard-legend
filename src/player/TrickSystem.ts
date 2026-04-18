@@ -24,7 +24,8 @@ export class TrickSystem {
   getBaseScore(name: TrickName): number { return TRICK_SCORES[name]; }
 
   landTrick(name: TrickName): boolean {
-    if (this.chain.includes(name)) return false;
+    // Only prevent consecutive repeats, not all repeats
+    if (this.chain.length > 0 && this.chain[this.chain.length - 1] === name) return false;
     this.chain.push(name);
     this.baseTotal += TRICK_SCORES[name];
     this._lastTrickName = name;
