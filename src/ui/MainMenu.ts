@@ -76,7 +76,7 @@ export class MainMenu {
     });
 
     const hint = document.createElement('div');
-    hint.textContent = 'WASD to move \u2022 Space to ollie \u2022 Mouse to look';
+    hint.innerHTML = 'WASD move \u2022 Space ollie \u2022 Space+J kickflip \u2022 Space+K heelflip<br>F grind \u2022 Shift manual \u2022 L grab \u2022 Mouse look \u2022 Tab zones';
     hint.style.cssText = `
       font-family: 'Courier New', Courier, monospace;
       font-size: 12px;

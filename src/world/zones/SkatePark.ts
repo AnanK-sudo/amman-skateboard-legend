@@ -107,6 +107,13 @@ export class SkatePark implements Zone {
     ground.receiveShadow = true;
     this.addMesh(scene, ground);
 
+    // Grid overlay for concrete texture feel
+    const grid = new THREE.GridHelper(80, 40, 0x222244, 0x222244);
+    (grid.material as THREE.Material).transparent = true;
+    (grid.material as THREE.Material).opacity = 0.15;
+    grid.position.y = 0.01;
+    this.addMesh(scene, grid);
+
     // Ground physics (flat infinite plane)
     const groundBody = new CANNON.Body({
       type: CANNON.Body.STATIC,

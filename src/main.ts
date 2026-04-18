@@ -15,6 +15,7 @@ import { MainMenu } from '@/ui/MainMenu';
 import { SaveManager } from '@/progression/SaveManager';
 import { ChallengeManager, Challenge } from '@/progression/ChallengeManager';
 import { UnlockManager } from '@/progression/UnlockManager';
+import { GrindDetector } from '@/player/GrindDetector';
 
 // --- Renderer ---
 const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
@@ -80,6 +81,9 @@ let currentZoneIndex = 0;
 // --- Skater ---
 const skater = new Skater(physics.world);
 scene.add(skater.mesh);
+
+// --- Grind Detector ---
+const grindDetector = new GrindDetector();
 
 // --- Blob shadow under skater ---
 const shadowTex = new THREE.TextureLoader().load(
@@ -184,6 +188,7 @@ hud.updateScore(totalScore);
 let ollieTime = 0;
 let didOllie = false;
 let spinRegistered = false;
+let wasAirborne = false;
 
 // --- Engine (declared early so menus can reference it) ---
 let engine: Engine;
@@ -313,6 +318,24 @@ engine = new Engine({
     }
     if (skater.isGrounded) spinRegistered = false;
 
+    // --- Grind detection ---
+    const grindResult = grindDetector.update(
+      skater.position,
+      input.isDown('KeyF'),
+      delta
+    );
+    if (grindResult) {
+      // Snap skater to rail
+      skater.body.position.set(grindResult.position.x, grindResult.position.y, grindResult.position.z);
+      if (!grindDetector.isGrinding) {
+        // Just finished grinding
+      } else if (grindDetector.grindProgress < 0.05) {
+        // Just started grinding — register trick
+        trickSystem.landTrick('fifty_fifty');
+        skater.playTrick('manual'); // visual: balance pose
+      }
+    }
+
     // Notify challenge manager of tricks landed
     if (trickSystem.lastTrick) {
       challengeManager.onTrickLanded(trickSystem.lastTrick);
@@ -345,6 +368,26 @@ engine = new Engine({
       unlockManager.updateCompleted(challengeManager.completedIds);
       SaveManager.save(save);
     }
+
+    // --- Auto cash out combo on landing ---
+    if (wasAirborne && skater.isGrounded && trickSystem.comboActive) {
+      const comboScore = trickSystem.cashOut();
+      if (comboScore > 0) {
+        totalScore += comboScore;
+        hud.updateScore(totalScore);
+        hud.updateCombo([], 0, 0);
+        challengeManager.onComboCashed(comboScore);
+        save.highScore = Math.max(save.highScore, totalScore);
+        save.completedChallenges = challengeManager.completedIds;
+        save.unlockedZones = unlockManager.unlockedZones;
+        unlockManager.updateCompleted(challengeManager.completedIds);
+        SaveManager.save(save);
+        // Dust burst on landing
+        emitDust(skater.position.x, 0.05, skater.position.z);
+        emitDust(skater.position.x, 0.05, skater.position.z);
+      }
+    }
+    wasAirborne = !skater.isGrounded;
 
     // --- Speed HUD ---
     hud.updateSpeed(skater.speed / skater.maxSpeed);
