@@ -1,4 +1,8 @@
 import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { Engine } from '@/core/Engine';
 import { InputManager } from '@/core/InputManager';
 import { PhysicsWorld } from '@/core/PhysicsWorld';
@@ -177,6 +181,18 @@ function emitDust(x: number, y: number, z: number) {
 
 // --- Camera ---
 const followCam = new FollowCamera(window.innerWidth / window.innerHeight);
+
+// --- Post-processing (bloom) ---
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, followCam.camera));
+const bloomPass = new UnrealBloomPass(
+  new THREE.Vector2(window.innerWidth, window.innerHeight),
+  0.4,   // strength — subtle bloom
+  0.3,   // radius
+  0.85   // threshold — only bright things bloom (neon rails, sparks)
+);
+composer.addPass(bloomPass);
+composer.addPass(new OutputPass());
 
 // --- Input ---
 const input = new InputManager();
@@ -584,7 +600,7 @@ engine = new Engine({
 
     input.update();
   },
-  render: () => { renderer.render(scene, followCam.camera); },
+  render: () => { composer.render(); },
 });
 
 // Start the engine loop, but paused on main menu
@@ -594,6 +610,7 @@ mainMenu.show();
 
 window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
+  composer.setSize(window.innerWidth, window.innerHeight);
   followCam.camera.aspect = window.innerWidth / window.innerHeight;
   followCam.camera.updateProjectionMatrix();
 });
