@@ -270,56 +270,58 @@ engine = new Engine({
     followCam.update(delta, skater.position, skater.speed, skater.maxSpeed, skater.yaw);
 
     // --- Trick detection ---
-    // Hold J/K WHILE pressing Space for flip tricks. Just Space = ollie.
-    if (input.justPressed('Space') && skater.isGrounded) {
-      if (input.isDown('KeyJ') && (input.isDown('KeyA') || input.isDown('KeyD'))) {
+    // Each trick key is standalone — auto-ollies for you
+    // J = kickflip, K = heelflip, Space = plain ollie
+    // J+K = tre flip, Shift = manual, L = grab (air), A/D in air = spin
+
+    if (skater.isGrounded) {
+      if (input.justPressed('KeyJ') && input.isDown('KeyK')) {
+        // J+K together = tre flip
+        skater.body.velocity.y = 6; // auto-ollie
         trickSystem.landTrick('tre_flip');
         skater.playTrick('tre_flip');
-      } else if (input.isDown('KeyJ')) {
+      } else if (input.justPressed('KeyJ')) {
+        // J = kickflip
+        skater.body.velocity.y = 6;
         trickSystem.landTrick('kickflip');
         skater.playTrick('kickflip');
-      } else if (input.isDown('KeyK')) {
+      } else if (input.justPressed('KeyK')) {
+        // K = heelflip
+        skater.body.velocity.y = 6;
         trickSystem.landTrick('heelflip');
         skater.playTrick('heelflip');
-      } else {
+      } else if (input.justPressed('Space')) {
+        // Space = plain ollie
         trickSystem.landTrick('ollie');
         skater.playTrick('ollie');
       }
-    }
 
-    // Also detect: press J/K while already in air (within first 400ms of jump)
-    if (!skater.isGrounded && didOllie) {
-      const timeSinceOllie = performance.now() - ollieTime;
-      if (timeSinceOllie < 400) {
-        if (input.justPressed('KeyJ')) {
-          trickSystem.landTrick('kickflip');
-          skater.playTrick('kickflip');
-          didOllie = false;
-        } else if (input.justPressed('KeyK')) {
-          trickSystem.landTrick('heelflip');
-          skater.playTrick('heelflip');
-          didOllie = false;
-        }
-      } else {
-        didOllie = false;
+      // Shift = manual (ground only)
+      if (input.justPressed('ShiftLeft') || input.justPressed('ShiftRight')) {
+        trickSystem.landTrick('manual');
+        skater.playTrick('manual');
       }
     }
-    // Track ollie timing for air trick window
-    if (input.justPressed('Space') && skater.isGrounded) {
-      ollieTime = performance.now();
-      didOllie = true;
-    }
 
-    // Manual (only on ground)
-    if ((input.justPressed('ShiftLeft') || input.justPressed('ShiftRight')) && skater.isGrounded) {
-      trickSystem.landTrick('manual');
-      skater.playTrick('manual');
-    }
+    // --- Air tricks ---
+    if (!skater.isGrounded) {
+      // L = grab
+      if (input.justPressed('KeyL')) {
+        trickSystem.landTrick('grab');
+        skater.playTrick('grab');
+      }
 
-    // Grab in air
-    if (input.justPressed('KeyL') && !skater.isGrounded) {
-      trickSystem.landTrick('grab');
-      skater.playTrick('grab');
+      // J in air = kickflip
+      if (input.justPressed('KeyJ')) {
+        trickSystem.landTrick('kickflip');
+        skater.playTrick('kickflip');
+      }
+
+      // K in air = heelflip
+      if (input.justPressed('KeyK')) {
+        trickSystem.landTrick('heelflip');
+        skater.playTrick('heelflip');
+      }
     }
 
     // Spin in air (A/D while airborne)
