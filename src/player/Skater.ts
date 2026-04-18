@@ -20,8 +20,16 @@ export type TrickAnim = 'none' | 'kickflip' | 'heelflip' | 'tre_flip' | 'ollie' 
 export class Skater {
   readonly body: CANNON.Body;
   readonly mesh: THREE.Group;
-  private innerGroup: THREE.Group; // rotates for trick animations
-  private boardGroup: THREE.Group; // board + wheels, spins for flips
+  private innerGroup: THREE.Group;
+  private boardGroup: THREE.Group;
+  private leftArm: THREE.Mesh;
+  private rightArm: THREE.Mesh;
+  private leftLeg: THREE.Mesh;
+  private rightLeg: THREE.Mesh;
+  private torso: THREE.Mesh;
+  private head: THREE.Mesh;
+  private wheels: THREE.Mesh[] = [];
+
   private _yaw = 0;
   private _speed = 0;
   readonly maxSpeed = 15;
@@ -33,7 +41,14 @@ export class Skater {
   // Trick animation state
   private trickAnim: TrickAnim = 'none';
   private trickTimer = 0;
-  private trickDuration = 0.4; // seconds per trick anim
+  private trickDuration = 0.4;
+
+  // Smooth motion state
+  private animTime = 0;           // continuous timer for idle/ride animations
+  private currentLean = 0;        // smoothed lean angle (for turning)
+  private currentTilt = 0;        // smoothed forward/back tilt
+  private pushPhase = 0;          // push leg animation phase
+  private isPushing = false;      // true during push kick
 
   constructor(world: CANNON.World, spawn?: { x: number; y: number; z: number }) {
     this.body = new CANNON.Body({
@@ -46,52 +61,48 @@ export class Skater {
     });
     world.addBody(this.body);
 
-    // Outer group — positioned by physics
     this.mesh = new THREE.Group();
 
-    // Inner group — rotated by trick animations
     this.innerGroup = new THREE.Group();
     this.mesh.add(this.innerGroup);
 
-    // Body mesh (torso + head)
-    const torso = new THREE.Mesh(
+    // Torso
+    this.torso = new THREE.Mesh(
       new THREE.BoxGeometry(0.5, 1.0, 0.3),
       new THREE.MeshStandardMaterial({ color: 0xff6b35 })
     );
-    torso.position.y = 1.2;
-    this.innerGroup.add(torso);
+    this.torso.position.y = 1.2;
+    this.innerGroup.add(this.torso);
 
     // Head
-    const head = new THREE.Mesh(
+    this.head = new THREE.Mesh(
       new THREE.SphereGeometry(0.18, 8, 8),
       new THREE.MeshStandardMaterial({ color: 0xffb088 })
     );
-    head.position.y = 1.85;
-    this.innerGroup.add(head);
+    this.head.position.y = 1.85;
+    this.innerGroup.add(this.head);
 
-    // Arms
+    // Arms — stored as fields for animation
     const armGeo = new THREE.BoxGeometry(0.15, 0.6, 0.15);
     const armMat = new THREE.MeshStandardMaterial({ color: 0xff6b35 });
-    const leftArm = new THREE.Mesh(armGeo, armMat);
-    leftArm.position.set(-0.35, 1.3, 0);
-    leftArm.rotation.z = 0.2;
-    this.innerGroup.add(leftArm);
-    const rightArm = new THREE.Mesh(armGeo, armMat);
-    rightArm.position.set(0.35, 1.3, 0);
-    rightArm.rotation.z = -0.2;
-    this.innerGroup.add(rightArm);
+    this.leftArm = new THREE.Mesh(armGeo, armMat);
+    this.leftArm.position.set(-0.35, 1.3, 0);
+    this.innerGroup.add(this.leftArm);
+    this.rightArm = new THREE.Mesh(armGeo, armMat);
+    this.rightArm.position.set(0.35, 1.3, 0);
+    this.innerGroup.add(this.rightArm);
 
-    // Legs
+    // Legs — stored as fields for animation
     const legGeo = new THREE.BoxGeometry(0.18, 0.6, 0.18);
     const legMat = new THREE.MeshStandardMaterial({ color: 0x2d2d4e });
-    const leftLeg = new THREE.Mesh(legGeo, legMat);
-    leftLeg.position.set(-0.12, 0.4, 0);
-    this.innerGroup.add(leftLeg);
-    const rightLeg = new THREE.Mesh(legGeo, legMat);
-    rightLeg.position.set(0.12, 0.4, 0);
-    this.innerGroup.add(rightLeg);
+    this.leftLeg = new THREE.Mesh(legGeo, legMat);
+    this.leftLeg.position.set(-0.12, 0.4, 0);
+    this.innerGroup.add(this.leftLeg);
+    this.rightLeg = new THREE.Mesh(legGeo, legMat);
+    this.rightLeg.position.set(0.12, 0.4, 0);
+    this.innerGroup.add(this.rightLeg);
 
-    // Board group (board + wheels) — separate for flip animations
+    // Board group
     this.boardGroup = new THREE.Group();
     this.innerGroup.add(this.boardGroup);
 
@@ -102,7 +113,6 @@ export class Skater {
     board.position.y = 0.04;
     this.boardGroup.add(board);
 
-    // Trucks
     const truckGeo = new THREE.BoxGeometry(0.2, 0.03, 0.06);
     const truckMat = new THREE.MeshStandardMaterial({ color: 0x888888, metalness: 0.6 });
     const frontTruck = new THREE.Mesh(truckGeo, truckMat);
@@ -112,7 +122,6 @@ export class Skater {
     backTruck.position.set(0, 0.02, -0.28);
     this.boardGroup.add(backTruck);
 
-    // Wheels
     const wheelGeo = new THREE.CylinderGeometry(0.035, 0.035, 0.05, 8);
     const wheelMat = new THREE.MeshStandardMaterial({ color: 0xffffff });
     for (const [x, y, z] of [[-0.09, 0.035, 0.28], [0.09, 0.035, 0.28], [-0.09, 0.035, -0.28], [0.09, 0.035, -0.28]]) {
@@ -120,6 +129,7 @@ export class Skater {
       wheel.rotation.z = Math.PI / 2;
       wheel.position.set(x, y, z);
       this.boardGroup.add(wheel);
+      this.wheels.push(wheel);
     }
   }
 
@@ -129,9 +139,7 @@ export class Skater {
     return new THREE.Vector3(p.x, p.y, p.z);
   }
   get isGrounded(): boolean { return this.body.position.y < 1.1; }
-  get speed(): number {
-    return this._speed;
-  }
+  get speed(): number { return this._speed; }
 
   playTrick(trick: TrickAnim): void {
     if (trick === 'none') return;
@@ -139,85 +147,197 @@ export class Skater {
     this.trickTimer = 0;
   }
 
+  private lerp(current: number, target: number, rate: number, delta: number): number {
+    return current + (target - current) * (1 - Math.exp(-rate * delta));
+  }
+
   update(delta: number, input: SkaterInput): void {
-    // Turning
-    if (input.left) this._yaw += this.turnSpeed * delta;
-    if (input.right) this._yaw -= this.turnSpeed * delta;
+    this.animTime += delta;
+
+    // --- Turning (smooth) ---
+    const turnInput = (input.left ? 1 : 0) - (input.right ? 1 : 0);
+    this._yaw += turnInput * this.turnSpeed * delta;
 
     const forward = new CANNON.Vec3(-Math.sin(this._yaw), 0, -Math.cos(this._yaw));
 
-    // Wake body on any input
     if (input.forward || input.backward || input.ollie || input.left || input.right) {
       this.body.wakeUp();
     }
 
-    // Movement uses kinematic position updates for horizontal, physics for vertical (gravity/jumping)
-    // This avoids ground friction killing all momentum
+    // --- Speed (smooth acceleration/deceleration) ---
+    const wasPushing = this.isPushing;
     if (input.forward) {
       this._speed = Math.min(this._speed + this.pushForce * delta, this.maxSpeed);
+      this.isPushing = true;
     } else if (input.backward) {
       this._speed = Math.max(this._speed - this.brakeForce * delta, 0);
+      this.isPushing = false;
     } else {
-      // Natural slowdown
       this._speed *= (1 - 2 * delta);
       if (this._speed < 0.01) this._speed = 0;
+      this.isPushing = false;
     }
 
-    // Move the body position directly for horizontal
-    const moveX = forward.x * this._speed * delta;
-    const moveZ = forward.z * this._speed * delta;
-    this.body.position.x += moveX;
-    this.body.position.z += moveZ;
+    // Push animation trigger
+    if (this.isPushing && !wasPushing) {
+      this.pushPhase = 0;
+    }
+    if (this.isPushing) {
+      this.pushPhase += delta * 4; // 4 pushes per second at full speed
+    }
+
+    // --- Move body ---
+    this.body.position.x += forward.x * this._speed * delta;
+    this.body.position.z += forward.z * this._speed * delta;
 
     // Ollie
     if (input.ollie && this.isGrounded) {
       this.body.velocity.y = this.ollieImpulse;
     }
 
-    // --- Trick animations ---
+    // --- Smooth body motion (only when NOT doing a trick) ---
+    const speedRatio = this._speed / this.maxSpeed;
+
+    if (this.trickAnim === 'none') {
+      // Lean into turns
+      const targetLean = -turnInput * 0.25 * Math.max(speedRatio, 0.3);
+      this.currentLean = this.lerp(this.currentLean, targetLean, 8, delta);
+
+      // Forward tilt when accelerating, backward when braking
+      let targetTilt = 0;
+      if (input.forward) targetTilt = -0.08 - speedRatio * 0.06;
+      else if (input.backward) targetTilt = 0.15;
+      this.currentTilt = this.lerp(this.currentTilt, targetTilt, 6, delta);
+
+      // Apply body lean + tilt
+      this.innerGroup.rotation.z = this.currentLean;
+      this.innerGroup.rotation.x = this.currentTilt;
+      this.innerGroup.position.y = 0;
+
+      // Board tilts with turn
+      this.boardGroup.rotation.z = this.currentLean * 0.6;
+      this.boardGroup.rotation.x = 0;
+      this.boardGroup.rotation.y = 0;
+
+      // --- Leg animation ---
+      if (this.isPushing && this.isGrounded) {
+        // Push kick: right leg swings back to push
+        const pushSwing = Math.sin(this.pushPhase * Math.PI * 2);
+        this.rightLeg.rotation.x = pushSwing * 0.6; // swing back and forward
+        this.rightLeg.position.y = 0.4 - Math.abs(pushSwing) * 0.1;
+        this.leftLeg.rotation.x = -pushSwing * 0.1; // subtle counter-movement
+        this.leftLeg.position.y = 0.4;
+      } else if (this._speed > 0.5 && this.isGrounded) {
+        // Riding: slight crouch, knees bent
+        const crouch = speedRatio * 0.05;
+        this.leftLeg.rotation.x = 0;
+        this.rightLeg.rotation.x = 0;
+        this.leftLeg.position.y = 0.4 - crouch;
+        this.rightLeg.position.y = 0.4 - crouch;
+        // Slight body lower at speed
+        this.torso.position.y = 1.2 - crouch;
+      } else {
+        // Idle: subtle idle sway
+        const idleSway = Math.sin(this.animTime * 1.5) * 0.01;
+        this.leftLeg.rotation.x = 0;
+        this.rightLeg.rotation.x = 0;
+        this.leftLeg.position.y = 0.4;
+        this.rightLeg.position.y = 0.4;
+        this.torso.position.y = 1.2;
+        this.innerGroup.rotation.z = this.currentLean + idleSway;
+      }
+
+      // --- Arm animation ---
+      if (this.isPushing && this.isGrounded) {
+        // Arms swing opposite to legs for balance
+        const armSwing = Math.sin(this.pushPhase * Math.PI * 2);
+        this.leftArm.rotation.x = armSwing * 0.4;
+        this.rightArm.rotation.x = -armSwing * 0.4;
+        this.leftArm.rotation.z = 0.2;
+        this.rightArm.rotation.z = -0.2;
+      } else if (this._speed > 0.5) {
+        // Arms out for balance at speed
+        const balanceSpread = 0.3 + speedRatio * 0.4;
+        this.leftArm.rotation.z = this.lerp(this.leftArm.rotation.z, balanceSpread, 4, delta);
+        this.rightArm.rotation.z = this.lerp(this.rightArm.rotation.z, -balanceSpread, 4, delta);
+        // Subtle sway
+        const sway = Math.sin(this.animTime * 3) * 0.05 * speedRatio;
+        this.leftArm.rotation.x = sway;
+        this.rightArm.rotation.x = -sway;
+      } else {
+        // Idle arms
+        this.leftArm.rotation.z = this.lerp(this.leftArm.rotation.z, 0.15, 4, delta);
+        this.rightArm.rotation.z = this.lerp(this.rightArm.rotation.z, -0.15, 4, delta);
+        this.leftArm.rotation.x = 0;
+        this.rightArm.rotation.x = 0;
+      }
+
+      // In air: tuck legs up
+      if (!this.isGrounded) {
+        this.leftLeg.rotation.x = this.lerp(this.leftLeg.rotation.x, -0.4, 10, delta);
+        this.rightLeg.rotation.x = this.lerp(this.rightLeg.rotation.x, -0.4, 10, delta);
+        this.leftLeg.position.y = 0.45;
+        this.rightLeg.position.y = 0.45;
+        // Arms up for air balance
+        this.leftArm.rotation.z = this.lerp(this.leftArm.rotation.z, 0.8, 8, delta);
+        this.rightArm.rotation.z = this.lerp(this.rightArm.rotation.z, -0.8, 8, delta);
+      }
+
+      // Spin wheels based on speed
+      const wheelSpin = this._speed * delta * 20;
+      for (const wheel of this.wheels) {
+        wheel.rotation.x += wheelSpin;
+      }
+    }
+
+    // --- Trick animations (override body motion) ---
     if (this.trickAnim !== 'none') {
       this.trickTimer += delta;
       const t = Math.min(this.trickTimer / this.trickDuration, 1);
+      const ease = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2; // easeInOutQuad
 
       switch (this.trickAnim) {
         case 'kickflip':
-          // Board does a full 360 roll on X axis
-          this.boardGroup.rotation.z = t * Math.PI * 2;
-          this.innerGroup.rotation.x = Math.sin(t * Math.PI) * 0.15;
+          this.boardGroup.rotation.z = ease * Math.PI * 2;
+          this.innerGroup.rotation.x = Math.sin(t * Math.PI) * 0.2;
+          this.leftLeg.rotation.x = Math.sin(t * Math.PI) * -0.5;
+          this.rightLeg.rotation.x = Math.sin(t * Math.PI) * -0.3;
           break;
         case 'heelflip':
-          // Board rolls opposite direction
-          this.boardGroup.rotation.z = -t * Math.PI * 2;
-          this.innerGroup.rotation.x = Math.sin(t * Math.PI) * 0.15;
+          this.boardGroup.rotation.z = -ease * Math.PI * 2;
+          this.innerGroup.rotation.x = Math.sin(t * Math.PI) * 0.2;
+          this.leftLeg.rotation.x = Math.sin(t * Math.PI) * -0.3;
+          this.rightLeg.rotation.x = Math.sin(t * Math.PI) * -0.5;
           break;
         case 'tre_flip':
-          // Board flips + spins
-          this.boardGroup.rotation.z = t * Math.PI * 2;
-          this.boardGroup.rotation.y = t * Math.PI * 2;
-          this.innerGroup.rotation.x = Math.sin(t * Math.PI) * 0.2;
+          this.boardGroup.rotation.z = ease * Math.PI * 2;
+          this.boardGroup.rotation.y = ease * Math.PI * 2;
+          this.innerGroup.rotation.x = Math.sin(t * Math.PI) * 0.25;
           break;
         case 'ollie':
-          // Crouch then extend
           this.innerGroup.position.y = Math.sin(t * Math.PI) * 0.3;
-          this.innerGroup.rotation.x = Math.sin(t * Math.PI) * -0.1;
+          this.innerGroup.rotation.x = Math.sin(t * Math.PI) * -0.12;
+          this.leftLeg.rotation.x = Math.sin(t * Math.PI) * -0.5;
+          this.rightLeg.rotation.x = Math.sin(t * Math.PI) * -0.3;
           break;
         case 'manual':
-          // Tilt back, nose up
-          this.boardGroup.rotation.x = -0.3 * (1 - t);
-          this.innerGroup.rotation.x = -0.15 * (1 - t);
+          this.boardGroup.rotation.x = -0.3 * Math.sin(t * Math.PI);
+          this.innerGroup.rotation.x = -0.15 * Math.sin(t * Math.PI);
+          this.leftArm.rotation.z = 0.6 * Math.sin(t * Math.PI);
+          this.rightArm.rotation.z = -0.6 * Math.sin(t * Math.PI);
           break;
         case 'grab':
-          // Crouch and reach down
           this.innerGroup.rotation.x = Math.sin(t * Math.PI) * 0.4;
+          this.rightArm.rotation.x = Math.sin(t * Math.PI) * -1.2;
           break;
         case 'spin':
-          // Full 360 body spin
-          this.innerGroup.rotation.y = t * Math.PI * 2;
+          this.innerGroup.rotation.y = ease * Math.PI * 2;
+          this.leftArm.rotation.z = 0.8;
+          this.rightArm.rotation.z = -0.8;
           break;
       }
 
       if (t >= 1) {
-        // Reset animation
         this.trickAnim = 'none';
         this.trickTimer = 0;
         this.boardGroup.rotation.set(0, 0, 0);

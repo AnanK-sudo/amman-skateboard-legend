@@ -183,7 +183,7 @@ engine = new Engine({
     followCam.handleMouseInput(input.mouseDelta.x, input.mouseDelta.y);
     skater.update(delta, getSkaterInput());
     physics.step(delta);
-    followCam.update(delta, skater.position);
+    followCam.update(delta, skater.position, skater.speed, skater.maxSpeed);
 
     // --- Trick detection ---
     if (input.justPressed('Space') && skater.isGrounded) {
