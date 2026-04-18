@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
+import { createGraffitiMaterial } from '@/shaders/GraffitiMaterial';
 
 export interface StairsConfig {
   position: THREE.Vector3;
@@ -21,7 +22,7 @@ export class Stairs {
     this.group = new THREE.Group();
     this.bodies = [];
 
-    const mat = new THREE.MeshStandardMaterial({ color: 0x4a4a6a, roughness: 0.9 });
+    const mat = createGraffitiMaterial(0x4a4a6a);
 
     for (let i = 0; i < steps; i++) {
       // Each step is a box that accumulates in depth and height

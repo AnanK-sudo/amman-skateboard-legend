@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
+import { createGraffitiMaterial, createNeonMaterial } from '@/shaders/GraffitiMaterial';
 
 export interface LedgeConfig {
   position: THREE.Vector3;
@@ -10,7 +11,7 @@ export interface LedgeConfig {
 }
 
 export class Ledge {
-  readonly mesh: THREE.Mesh;
+  readonly mesh: THREE.Group;
   readonly body: CANNON.Body;
   readonly grindPath: { start: THREE.Vector3; end: THREE.Vector3 };
 
@@ -18,16 +19,27 @@ export class Ledge {
     const { position, length, height, width, rotation = 0 } = config;
     const halfLen = length / 2;
 
-    // --- Three.js box mesh ---
+    // --- Three.js group (ledge body + neon strip) ---
+    this.mesh = new THREE.Group();
+
     const geo = new THREE.BoxGeometry(length, height, width);
-    const mat = new THREE.MeshStandardMaterial({ color: 0x5a5a7a, roughness: 0.7 });
-    this.mesh = new THREE.Mesh(geo, mat);
+    const mat = createGraffitiMaterial(0x5a5a7a);
+    const ledgeMesh = new THREE.Mesh(geo, mat);
+    ledgeMesh.castShadow = true;
+    ledgeMesh.receiveShadow = true;
+    this.mesh.add(ledgeMesh);
+
+    // Thin neon strip along top edge
+    const stripGeo = new THREE.BoxGeometry(length, 0.02, 0.06);
+    const stripMat = createNeonMaterial(0x58a6ff, 1.0);
+    const stripMesh = new THREE.Mesh(stripGeo, stripMat);
+    stripMesh.position.set(0, height / 2 + 0.01, 0);
+    this.mesh.add(stripMesh);
+
     this.mesh.position.copy(position);
     // Mesh origin is center; lift so bottom sits at position.y
     this.mesh.position.y = position.y + height / 2;
     this.mesh.rotation.y = rotation;
-    this.mesh.castShadow = true;
-    this.mesh.receiveShadow = true;
 
     // --- CANNON box physics ---
     const halfExtents = new CANNON.Vec3(halfLen, height / 2, width / 2);

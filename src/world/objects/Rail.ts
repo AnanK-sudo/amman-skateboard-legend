@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
+import { createNeonMaterial } from '@/shaders/GraffitiMaterial';
 
 export interface RailConfig {
   position: THREE.Vector3;
@@ -22,7 +23,7 @@ export class Rail {
     // --- Three.js mesh group ---
     this.mesh = new THREE.Group();
 
-    const railMat = new THREE.MeshStandardMaterial({ color: 0xcccccc, metalness: 0.8, roughness: 0.3 });
+    const railMat = createNeonMaterial(0x3fb950, 1.5);
     const postMat = new THREE.MeshStandardMaterial({ color: 0x888888, metalness: 0.6, roughness: 0.4 });
 
     // Main rail cylinder (along X before rotation)
