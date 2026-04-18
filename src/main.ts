@@ -65,7 +65,7 @@ const followCam = new FollowCamera(window.innerWidth / window.innerHeight);
 
 // --- Input ---
 const input = new InputManager();
-input.attach(document.body);
+input.attach(document);
 
 canvas.addEventListener('click', () => { canvas.requestPointerLock(); });
 
@@ -188,18 +188,33 @@ const engine = new Engine({
       if (input.isDown('KeyJ')) {
         if (input.isDown('KeyA') || input.isDown('KeyD')) {
           trickSystem.landTrick('tre_flip');
+          skater.playTrick('tre_flip');
         } else {
           trickSystem.landTrick('kickflip');
+          skater.playTrick('kickflip');
         }
       } else if (input.isDown('KeyK')) {
         trickSystem.landTrick('heelflip');
+        skater.playTrick('heelflip');
       } else {
         trickSystem.landTrick('ollie');
+        skater.playTrick('ollie');
       }
     }
 
     if (input.justPressed('ShiftLeft') || input.justPressed('ShiftRight')) {
       trickSystem.landTrick('manual');
+      skater.playTrick('manual');
+    }
+
+    // Grab in air
+    if (input.isDown('KeyL') && !skater.isGrounded) {
+      skater.playTrick('grab');
+    }
+
+    // Spin in air
+    if ((input.isDown('KeyA') || input.isDown('KeyD')) && !skater.isGrounded) {
+      skater.playTrick('spin');
     }
 
     // Notify challenge manager of tricks landed
