@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { Engine } from '@/core/Engine'
 
 console.log('ANAN SKATE — engine running')
 
@@ -44,10 +45,14 @@ function onResize(): void {
 }
 window.addEventListener('resize', onResize)
 
-// Animation loop
-function animate(): void {
-  requestAnimationFrame(animate)
-  renderer.render(scene, camera)
-}
+// Game engine loop
+const engine = new Engine({
+  update: (_delta: number) => {
+    // Game update logic will be added here
+  },
+  render: () => {
+    renderer.render(scene, camera)
+  },
+})
 
-animate()
+engine.start()
