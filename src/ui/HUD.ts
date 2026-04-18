@@ -360,4 +360,30 @@ export class HUD {
   hideChallenge(): void {
     this.challengePanel.style.display = 'none';
   }
+
+  flashNewBest(): void {
+    const el = document.createElement('div');
+    el.textContent = 'NEW BEST!';
+    Object.assign(el.style, {
+      position: 'absolute', top: '20%', left: '50%',
+      transform: 'translateX(-50%) rotate(-5deg) scale(1)',
+      fontFamily: '"Impact", "Arial Black", sans-serif',
+      fontSize: '56px', color: '#ffdd00',
+      textShadow: '3px 3px 0 #ff6b35, 6px 6px 0 rgba(0,0,0,0.5)',
+      letterSpacing: '4px', opacity: '1',
+      transition: 'opacity 0.5s ease, transform 0.5s ease',
+      pointerEvents: 'none', zIndex: '50',
+    });
+    this.root.appendChild(el);
+
+    // Animate: scale up then fade out
+    requestAnimationFrame(() => {
+      el.style.transform = 'translateX(-50%) rotate(-5deg) scale(1.3)';
+    });
+    setTimeout(() => {
+      el.style.opacity = '0';
+      el.style.transform = 'translateX(-50%) rotate(-5deg) scale(0.8)';
+    }, 1500);
+    setTimeout(() => el.remove(), 2200);
+  }
 }

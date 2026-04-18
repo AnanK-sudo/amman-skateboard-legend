@@ -19,6 +19,12 @@ import { GrindDetector } from '@/player/GrindDetector';
 import { AudioManager } from '@/core/AudioManager';
 import { SparkSystem } from '@/effects/SparkSystem';
 import { CameraShake } from '@/effects/CameraShake';
+import { SpeedLines } from '@/effects/SpeedLines';
+import { SlowMo } from '@/effects/SlowMo';
+import { ComboTimer } from '@/ui/ComboTimer';
+import { Customization } from '@/player/Customization';
+import { CustomizeMenu } from '@/ui/CustomizeMenu';
+import { StatsTracker } from '@/progression/StatsTracker';
 
 // --- Renderer ---
 const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
@@ -99,6 +105,20 @@ let grindSound: ReturnType<typeof audio.playGrindLoop> = null;
 // --- Effects ---
 const sparks = new SparkSystem(scene);
 const cameraShake = new CameraShake();
+const slowMo = new SlowMo();
+const comboTimer = new ComboTimer();
+
+// Speed lines overlay (attached to camera)
+const speedLines = new SpeedLines(followCam.camera);
+followCam.camera.add(speedLines.getMesh());
+speedLines.getMesh().position.z = -1;
+scene.add(followCam.camera); // camera must be in scene for child rendering
+
+// --- Customization ---
+const customization = new Customization();
+
+// --- Stats ---
+const stats = new StatsTracker();
 
 // Scan scene for objects with grindPath and register them
 function registerGrindables() {
@@ -245,15 +265,33 @@ const mainMenu = new MainMenu({
   },
 });
 
+// Customize menu
+const customizeMenu = new CustomizeMenu(customization, () => {
+  // Apply style to skater when preset changes
+  customization.applyToSkater(
+    skater.mesh.children[0] as THREE.Group, // innerGroup
+    (skater.mesh.children[0] as THREE.Group).children.find(
+      c => c instanceof THREE.Group && c !== skater.mesh.children[0]
+    ) as THREE.Group || skater.mesh.children[0].children[9] as THREE.Group // boardGroup
+  );
+});
+
 engine = new Engine({
-  update: (delta) => {
+  update: (rawDelta) => {
+    // Apply slow-mo time scale
+    slowMo.update(rawDelta);
+    const delta = rawDelta * slowMo.timeScale;
     // --- Pause toggle ---
     if (input.justPressed('Escape')) {
       if (pauseMenu.isVisible) {
         pauseMenu.hide();
         engine.resume();
         canvas.requestPointerLock();
+      } else if (customizeMenu.isVisible) {
+        customizeMenu.hide();
+        engine.resume();
       } else {
+        pauseMenu.updateStats(stats.getSession());
         pauseMenu.show();
         engine.pause();
         document.exitPointerLock();
@@ -376,9 +414,23 @@ engine = new Engine({
       if (grindSound) { grindSound.stop(); grindSound = null; }
     }
 
-    // Notify challenge manager of tricks landed
+    // Notify systems of tricks landed
     if (trickSystem.lastTrick) {
       challengeManager.onTrickLanded(trickSystem.lastTrick);
+      stats.onTrickLanded(trickSystem.lastTrick);
+      // Start or extend combo timer
+      if (!comboTimer.active) comboTimer.start();
+      else comboTimer.extend(1.5);
+    }
+
+    // --- Combo timer ---
+    comboTimer.update(delta);
+    if (comboTimer.expired && trickSystem.comboActive) {
+      // Timer ran out — lose combo
+      trickSystem.bail();
+      hud.updateCombo([], 0, 0);
+      hud.flashTrick('TIMEOUT', 0);
+      comboTimer.stop();
     }
 
     // --- HUD combo display ---
@@ -424,16 +476,25 @@ engine = new Engine({
         hud.flashTrick('BAIL', 0);
         audio.playBail();
         cameraShake.trigger(0.4);
+        stats.onBail();
       } else if (trickSystem.comboActive) {
-        // Cash out combo on clean landing
         const comboScore = trickSystem.cashOut();
         if (comboScore > 0) {
           totalScore += comboScore;
           hud.updateScore(totalScore);
           hud.updateCombo([], 0, 0);
+          comboTimer.stop();
           challengeManager.onComboCashed(comboScore);
+          stats.onComboCashed(comboScore, trickSystem.comboChain.length);
           audio.playScoreDing();
           cameraShake.trigger(0.08);
+          // Slow-mo on big combos
+          if (comboScore >= 3000) slowMo.trigger(0.6);
+          // Check for new personal best
+          const zoneId = zoneIds[currentZoneIndex];
+          if (stats.checkZoneBest(zoneId, totalScore, comboScore, 0)) {
+            hud.flashNewBest();
+          }
           save.highScore = Math.max(save.highScore, totalScore);
           save.completedChallenges = challengeManager.completedIds;
           save.unlockedZones = unlockManager.unlockedZones;
@@ -451,6 +512,7 @@ engine = new Engine({
     sparks.update(delta);
     const shakeOffset = cameraShake.update(delta);
     followCam.camera.position.add(shakeOffset);
+    speedLines.update(delta, skater.speed / skater.maxSpeed);
 
     // --- Rolling sound ---
     if (skater.isGrounded && skater.speed > 0.5) {
