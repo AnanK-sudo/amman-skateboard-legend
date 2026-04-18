@@ -19,7 +19,7 @@ import { GrindDetector } from '@/player/GrindDetector';
 import { AudioManager } from '@/core/AudioManager';
 import { SparkSystem } from '@/effects/SparkSystem';
 import { CameraShake } from '@/effects/CameraShake';
-import { SpeedLines } from '@/effects/SpeedLines';
+// SpeedLines uses CSS overlay instead of shader
 import { SlowMo } from '@/effects/SlowMo';
 import { ComboTimer } from '@/ui/ComboTimer';
 import { Customization } from '@/player/Customization';
@@ -108,11 +108,14 @@ const cameraShake = new CameraShake();
 const slowMo = new SlowMo();
 const comboTimer = new ComboTimer();
 
-// Speed lines overlay (attached to camera)
-const speedLines = new SpeedLines(followCam.camera);
-followCam.camera.add(speedLines.getMesh());
-speedLines.getMesh().position.z = -1;
-scene.add(followCam.camera); // camera must be in scene for child rendering
+// Speed lines (CSS-based overlay for simplicity)
+const speedLinesEl = document.createElement('div');
+speedLinesEl.style.cssText = `
+  position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;
+  background:radial-gradient(ellipse at center, transparent 40%, rgba(255,255,255,0.03) 100%);
+  opacity:0;transition:opacity 0.3s;z-index:1;
+`;
+document.getElementById('hud')!.appendChild(speedLinesEl);
 
 // --- Customization ---
 const customization = new Customization();
@@ -267,13 +270,20 @@ const mainMenu = new MainMenu({
 
 // Customize menu
 const customizeMenu = new CustomizeMenu(customization, () => {
-  // Apply style to skater when preset changes
-  customization.applyToSkater(
-    skater.mesh.children[0] as THREE.Group, // innerGroup
-    (skater.mesh.children[0] as THREE.Group).children.find(
-      c => c instanceof THREE.Group && c !== skater.mesh.children[0]
-    ) as THREE.Group || skater.mesh.children[0].children[9] as THREE.Group // boardGroup
-  );
+  // Apply style to skater — safely traverse to find groups
+  try {
+    const inner = skater.mesh.children[0] as THREE.Group;
+    if (!inner) return;
+    // boardGroup is the last Group child of innerGroup
+    let board: THREE.Group | null = null;
+    for (let i = inner.children.length - 1; i >= 0; i--) {
+      if (inner.children[i] instanceof THREE.Group) {
+        board = inner.children[i] as THREE.Group;
+        break;
+      }
+    }
+    if (board) customization.applyToSkater(inner, board);
+  } catch (e) { console.warn('Customize apply failed:', e); }
 });
 
 engine = new Engine({
@@ -512,7 +522,9 @@ engine = new Engine({
     sparks.update(delta);
     const shakeOffset = cameraShake.update(delta);
     followCam.camera.position.add(shakeOffset);
-    speedLines.update(delta, skater.speed / skater.maxSpeed);
+    // Speed lines intensity based on speed
+    const speedRatio = skater.speed / skater.maxSpeed;
+    speedLinesEl.style.opacity = speedRatio > 0.5 ? String((speedRatio - 0.5) * 2 * 0.6) : '0';
 
     // --- Rolling sound ---
     if (skater.isGrounded && skater.speed > 0.5) {
