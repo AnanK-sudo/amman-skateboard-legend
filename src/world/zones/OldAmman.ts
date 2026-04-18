@@ -103,6 +103,77 @@ export class OldAmman implements Zone {
     this.objects.push(ledge.mesh);
     this.bodies.push(ledge.body);
 
+    // Stair set 3 — back alley
+    const stairs3 = new Stairs(
+      { position: new THREE.Vector3(-30, 0, -20), steps: 6, stepWidth: 4, rotation: Math.PI / 2 },
+      world,
+    );
+    scene.add(stairs3.group);
+    this.objects.push(stairs3.group);
+    this.bodies.push(...stairs3.bodies);
+
+    // Rail along stairs3
+    const rail3 = new Rail(
+      { position: new THREE.Vector3(-30, 0.75, -20), length: 4.5, height: 0.75, rotation: Math.PI / 2 },
+      world,
+    );
+    scene.add(rail3.mesh);
+    this.objects.push(rail3.mesh);
+    this.bodies.push(rail3.body);
+
+    // Stair set 4 — far right corner
+    const stairs4 = new Stairs(
+      { position: new THREE.Vector3(25, 0, -15), steps: 3, stepWidth: 3, rotation: -Math.PI / 4 },
+      world,
+    );
+    scene.add(stairs4.group);
+    this.objects.push(stairs4.group);
+    this.bodies.push(...stairs4.bodies);
+
+    // Ledge 2 — long stone bench near stairs1
+    const ledge2 = new Ledge(
+      {
+        position: new THREE.Vector3(-15, 0, 5),
+        length: 6,
+        height: 0.45,
+        width: 0.8,
+        rotation: 0,
+      },
+      world,
+    );
+    scene.add(ledge2.mesh);
+    this.objects.push(ledge2.mesh);
+    this.bodies.push(ledge2.body);
+
+    // Ledge 3 — diagonal plaza edge
+    const ledge3 = new Ledge(
+      {
+        position: new THREE.Vector3(20, 0, 15),
+        length: 7,
+        height: 0.5,
+        width: 1.0,
+        rotation: Math.PI / 5,
+      },
+      world,
+    );
+    scene.add(ledge3.mesh);
+    this.objects.push(ledge3.mesh);
+    this.bodies.push(ledge3.body);
+
+    // Rail 3 — far left flat spot
+    const rail4 = new Rail(
+      {
+        position: new THREE.Vector3(-25, 0.4, 20),
+        length: 6,
+        height: 0.4,
+        rotation: Math.PI / 8,
+      },
+      world,
+    );
+    scene.add(rail4.mesh);
+    this.objects.push(rail4.mesh);
+    this.bodies.push(rail4.body);
+
     // Load OSM data async — adds street geometry when available
     this._loadOsmAsync(scene);
   }

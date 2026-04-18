@@ -57,6 +57,92 @@ export class StreetSpot implements Zone {
     // Flat rail
     const flatRail = new Rail({ position: new THREE.Vector3(0, 0, 15), length: 7, height: 0.35 }, world);
     scene.add(flatRail.mesh); this.objects.push(flatRail.mesh); this.bodies.push(flatRail.body);
+
+    // Ground physics body — required for raycast ground detection
+    const groundBody = new CANNON.Body({
+      type: CANNON.Body.STATIC,
+      shape: new CANNON.Plane(),
+    });
+    groundBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2);
+    world.addBody(groundBody);
+    this.bodies.push(groundBody);
+
+    // Elevated curb sections along edges — simulate sidewalks
+    const curbPositions: [number, number, number][] = [
+      [-35, 0, 0],
+      [-35, 0, 15],
+      [-35, 0, -15],
+      [35, 0, 0],
+      [35, 0, 15],
+      [35, 0, -15],
+    ];
+    for (const [cx, cy, cz] of curbPositions) {
+      const curb = new Platform(
+        { position: new THREE.Vector3(cx, cy, cz), width: 2, height: 0.18, depth: 12 },
+        world,
+      );
+      scene.add(curb.mesh);
+      this.objects.push(curb.mesh);
+      this.bodies.push(curb.body);
+    }
+
+    // Front/back curbs
+    const edgeCurbPositions: [number, number, number][] = [
+      [0, 0, -35],
+      [15, 0, -35],
+      [-15, 0, -35],
+      [0, 0, 35],
+    ];
+    for (const [cx, cy, cz] of edgeCurbPositions) {
+      const curb = new Platform(
+        { position: new THREE.Vector3(cx, cy, cz), width: 14, height: 0.15, depth: 2 },
+        world,
+      );
+      scene.add(curb.mesh);
+      this.objects.push(curb.mesh);
+      this.bodies.push(curb.body);
+    }
+
+    // Dumpsters / barriers for visual interest
+    const dumpster1 = new Platform(
+      { position: new THREE.Vector3(-20, 0, 5), width: 1.2, height: 1.4, depth: 2.4 },
+      world,
+    );
+    scene.add(dumpster1.mesh);
+    this.objects.push(dumpster1.mesh);
+    this.bodies.push(dumpster1.body);
+
+    const dumpster2 = new Platform(
+      { position: new THREE.Vector3(-22, 0, 5), width: 1.2, height: 1.4, depth: 2.4 },
+      world,
+    );
+    scene.add(dumpster2.mesh);
+    this.objects.push(dumpster2.mesh);
+    this.bodies.push(dumpster2.body);
+
+    const barrier1 = new Platform(
+      { position: new THREE.Vector3(20, 0, -18), width: 0.4, height: 0.8, depth: 3 },
+      world,
+    );
+    scene.add(barrier1.mesh);
+    this.objects.push(barrier1.mesh);
+    this.bodies.push(barrier1.body);
+
+    const barrier2 = new Platform(
+      { position: new THREE.Vector3(24, 0, -18), width: 0.4, height: 0.8, depth: 3 },
+      world,
+    );
+    scene.add(barrier2.mesh);
+    this.objects.push(barrier2.mesh);
+    this.bodies.push(barrier2.body);
+
+    const barrier3 = new Platform(
+      { position: new THREE.Vector3(28, 0, -18), width: 0.4, height: 0.8, depth: 3 },
+      world,
+    );
+    scene.add(barrier3.mesh);
+    this.objects.push(barrier3.mesh);
+    this.bodies.push(barrier3.body);
   }
 
   unload(scene: THREE.Scene, world: CANNON.World): void {
