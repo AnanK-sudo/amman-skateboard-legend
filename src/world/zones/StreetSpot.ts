@@ -13,165 +13,56 @@ export class StreetSpot implements Zone {
     spawnPoint: new THREE.Vector3(0, 1, 10),
   };
 
-  // Three.js objects
-  private groundMesh!: THREE.Mesh;
-  private stairs3!: Stairs;
-  private stairs5!: Stairs;
-  private stairs8!: Stairs;
-  private handrail5!: Rail;
-  private handrail8!: Rail;
-  private longLedge!: Ledge;
-  private bench!: Ledge;
-  private loadingDock!: Platform;
-  private flatRail!: Rail;
-
-  // All physics bodies for cleanup
-  private allBodies: CANNON.Body[] = [];
+  private objects: THREE.Object3D[] = [];
+  private bodies: CANNON.Body[] = [];
 
   load(scene: THREE.Scene, world: CANNON.World): void {
-    this.allBodies = [];
-
-    // --- Ground plane (80x80, concrete color) ---
-    const groundGeo = new THREE.BoxGeometry(80, 0.2, 80);
-    const groundMat = new THREE.MeshStandardMaterial({ color: 0x3a3a4a, roughness: 0.95 });
-    this.groundMesh = new THREE.Mesh(groundGeo, groundMat);
-    this.groundMesh.position.set(0, -0.1, 0);
-    this.groundMesh.receiveShadow = true;
-    scene.add(this.groundMesh);
-
-    const groundShape = new CANNON.Box(new CANNON.Vec3(40, 0.1, 40));
-    const groundBody = new CANNON.Body({ type: CANNON.Body.STATIC, mass: 0 });
-    groundBody.addShape(groundShape);
-    groundBody.position.set(0, -0.1, 0);
-    world.addBody(groundBody);
-    this.allBodies.push(groundBody);
-
-    // --- 3-stair set (left side, facing -Z) ---
-    this.stairs3 = new Stairs(
-      { position: new THREE.Vector3(-20, 0, -5), steps: 3, stepWidth: 4 },
-      world,
+    const ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(80, 80),
+      new THREE.MeshStandardMaterial({ color: 0x3a3a4a })
     );
-    scene.add(this.stairs3.group);
-    this.allBodies.push(...this.stairs3.bodies);
+    ground.rotation.x = -Math.PI / 2;
+    ground.receiveShadow = true;
+    scene.add(ground);
+    this.objects.push(ground);
 
-    // --- 5-stair set with handrail (center-left) ---
-    this.stairs5 = new Stairs(
-      { position: new THREE.Vector3(-8, 0, -5), steps: 5, stepWidth: 4 },
-      world,
-    );
-    scene.add(this.stairs5.group);
-    this.allBodies.push(...this.stairs5.bodies);
+    // 3-stair
+    const stairs3 = new Stairs({ position: new THREE.Vector3(-10, 0, -5), steps: 3, stepWidth: 4 }, world);
+    scene.add(stairs3.group); this.objects.push(stairs3.group); this.bodies.push(...stairs3.bodies);
 
-    // Handrail for 5-stair: top of last step
-    const stairs5TopY = 0.18 * 5; // STEP_HEIGHT * steps
-    const stairs5Depth = 0.28 * 5; // STEP_DEPTH * steps
-    this.handrail5 = new Rail(
-      {
-        position: new THREE.Vector3(-8 + 2.2, stairs5TopY + 0.45, -5 + stairs5Depth / 2),
-        length: stairs5Depth * 1.05,
-        height: 0.45,
-        rotation: Math.PI / 2,
-      },
-      world,
-    );
-    scene.add(this.handrail5.mesh);
-    this.allBodies.push(this.handrail5.body);
+    // 5-stair with handrail
+    const stairs5 = new Stairs({ position: new THREE.Vector3(0, 0, -8), steps: 5, stepWidth: 5 }, world);
+    scene.add(stairs5.group); this.objects.push(stairs5.group); this.bodies.push(...stairs5.bodies);
+    const handrail5 = new Rail({ position: new THREE.Vector3(2, 0.45, -9), length: 3, height: 0.7, rotation: 0.35 }, world);
+    scene.add(handrail5.mesh); this.objects.push(handrail5.mesh); this.bodies.push(handrail5.body);
 
-    // --- 8-stair set with handrail (center-right) ---
-    this.stairs8 = new Stairs(
-      { position: new THREE.Vector3(6, 0, -5), steps: 8, stepWidth: 5 },
-      world,
-    );
-    scene.add(this.stairs8.group);
-    this.allBodies.push(...this.stairs8.bodies);
+    // 8-stair with handrail
+    const stairs8 = new Stairs({ position: new THREE.Vector3(12, 0, -5), steps: 8, stepWidth: 6 }, world);
+    scene.add(stairs8.group); this.objects.push(stairs8.group); this.bodies.push(...stairs8.bodies);
+    const handrail8 = new Rail({ position: new THREE.Vector3(15, 0.72, -7), length: 4.5, height: 0.8, rotation: 0.3 }, world);
+    scene.add(handrail8.mesh); this.objects.push(handrail8.mesh); this.bodies.push(handrail8.body);
 
-    // Handrail for 8-stair: runs along right side
-    const stairs8TopY = 0.18 * 8;
-    const stairs8Depth = 0.28 * 8;
-    this.handrail8 = new Rail(
-      {
-        position: new THREE.Vector3(6 + 2.7, stairs8TopY + 0.45, -5 + stairs8Depth / 2),
-        length: stairs8Depth * 1.05,
-        height: 0.45,
-        rotation: Math.PI / 2,
-      },
-      world,
-    );
-    scene.add(this.handrail8.mesh);
-    this.allBodies.push(this.handrail8.body);
+    // Long ledge
+    const ledge1 = new Ledge({ position: new THREE.Vector3(-8, 0, 8), length: 8, height: 0.4, width: 0.5 }, world);
+    scene.add(ledge1.mesh); this.objects.push(ledge1.mesh); this.bodies.push(ledge1.body);
 
-    // --- Long ledge (right side, parallel to Z) ---
-    this.longLedge = new Ledge(
-      {
-        position: new THREE.Vector3(22, 0, 0),
-        length: 10,
-        height: 0.45,
-        width: 0.4,
-        rotation: 0,
-      },
-      world,
-    );
-    scene.add(this.longLedge.mesh);
-    this.allBodies.push(this.longLedge.body);
+    // Bench
+    const bench = new Ledge({ position: new THREE.Vector3(8, 0, 10), length: 2, height: 0.45, width: 0.6 }, world);
+    scene.add(bench.mesh); this.objects.push(bench.mesh); this.bodies.push(bench.body);
 
-    // --- Bench / short ledge ---
-    this.bench = new Ledge(
-      {
-        position: new THREE.Vector3(16, 0, 5),
-        length: 3,
-        height: 0.45,
-        width: 0.6,
-        rotation: Math.PI / 4,
-      },
-      world,
-    );
-    scene.add(this.bench.mesh);
-    this.allBodies.push(this.bench.body);
+    // Loading dock
+    const dock = new Platform({ position: new THREE.Vector3(-15, 0, -15), width: 6, height: 1.2, depth: 4 }, world);
+    scene.add(dock.mesh); this.objects.push(dock.mesh); this.bodies.push(dock.body);
 
-    // --- Loading dock (elevated platform, back area) ---
-    this.loadingDock = new Platform(
-      {
-        position: new THREE.Vector3(-18, 0, -22),
-        width: 12,
-        height: 1.2,
-        depth: 8,
-      },
-      world,
-    );
-    scene.add(this.loadingDock.mesh);
-    this.allBodies.push(this.loadingDock.body);
-
-    // --- Flat rail (center plaza) ---
-    this.flatRail = new Rail(
-      {
-        position: new THREE.Vector3(0, 0.45, 10),
-        length: 8,
-        height: 0.45,
-        rotation: 0,
-      },
-      world,
-    );
-    scene.add(this.flatRail.mesh);
-    this.allBodies.push(this.flatRail.body);
+    // Flat rail
+    const flatRail = new Rail({ position: new THREE.Vector3(0, 0, 15), length: 7, height: 0.35 }, world);
+    scene.add(flatRail.mesh); this.objects.push(flatRail.mesh); this.bodies.push(flatRail.body);
   }
 
   unload(scene: THREE.Scene, world: CANNON.World): void {
-    // Remove Three.js objects
-    scene.remove(this.groundMesh);
-    scene.remove(this.stairs3.group);
-    scene.remove(this.stairs5.group);
-    scene.remove(this.stairs8.group);
-    scene.remove(this.handrail5.mesh);
-    scene.remove(this.handrail8.mesh);
-    scene.remove(this.longLedge.mesh);
-    scene.remove(this.bench.mesh);
-    scene.remove(this.loadingDock.mesh);
-    scene.remove(this.flatRail.mesh);
-
-    // Remove all physics bodies
-    for (const body of this.allBodies) {
-      world.removeBody(body);
-    }
-    this.allBodies = [];
+    for (const obj of this.objects) scene.remove(obj);
+    for (const body of this.bodies) world.removeBody(body);
+    this.objects = [];
+    this.bodies = [];
   }
 }
