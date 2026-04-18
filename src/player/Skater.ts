@@ -23,9 +23,10 @@ export class Skater {
   private innerGroup: THREE.Group; // rotates for trick animations
   private boardGroup: THREE.Group; // board + wheels, spins for flips
   private _yaw = 0;
+  private _speed = 0;
   readonly maxSpeed = 15;
-  private pushForce = 30;
-  private brakeForce = 20;
+  private pushForce = 12;
+  private brakeForce = 15;
   private turnSpeed = 2.5;
   private ollieImpulse = 6;
 
@@ -129,8 +130,7 @@ export class Skater {
   }
   get isGrounded(): boolean { return this.body.position.y < 1.1; }
   get speed(): number {
-    const v = this.body.velocity;
-    return Math.sqrt(v.x * v.x + v.z * v.z);
+    return this._speed;
   }
 
   playTrick(trick: TrickAnim): void {
@@ -146,34 +146,28 @@ export class Skater {
 
     const forward = new CANNON.Vec3(-Math.sin(this._yaw), 0, -Math.cos(this._yaw));
 
-    // Push forward — directly set velocity for responsive controls
+    // Wake body on any input
+    if (input.forward || input.backward || input.ollie || input.left || input.right) {
+      this.body.wakeUp();
+    }
+
+    // Movement uses kinematic position updates for horizontal, physics for vertical (gravity/jumping)
+    // This avoids ground friction killing all momentum
     if (input.forward) {
-      const targetSpeed = this.maxSpeed;
-      const currentVelX = this.body.velocity.x;
-      const currentVelZ = this.body.velocity.z;
-      const accel = this.pushForce * delta;
-      this.body.velocity.x += forward.x * accel;
-      this.body.velocity.z += forward.z * accel;
-      // Clamp horizontal speed
-      const hSpeed = Math.sqrt(this.body.velocity.x ** 2 + this.body.velocity.z ** 2);
-      if (hSpeed > targetSpeed) {
-        const scale = targetSpeed / hSpeed;
-        this.body.velocity.x *= scale;
-        this.body.velocity.z *= scale;
-      }
+      this._speed = Math.min(this._speed + this.pushForce * delta, this.maxSpeed);
+    } else if (input.backward) {
+      this._speed = Math.max(this._speed - this.brakeForce * delta, 0);
+    } else {
+      // Natural slowdown
+      this._speed *= (1 - 2 * delta);
+      if (this._speed < 0.01) this._speed = 0;
     }
 
-    // Brake — reduce horizontal velocity
-    if (input.backward) {
-      this.body.velocity.x *= (1 - this.brakeForce * delta);
-      this.body.velocity.z *= (1 - this.brakeForce * delta);
-    }
-
-    // Natural friction when not pushing
-    if (!input.forward && !input.backward && this.isGrounded) {
-      this.body.velocity.x *= 0.98;
-      this.body.velocity.z *= 0.98;
-    }
+    // Move the body position directly for horizontal
+    const moveX = forward.x * this._speed * delta;
+    const moveZ = forward.z * this._speed * delta;
+    this.body.position.x += moveX;
+    this.body.position.z += moveZ;
 
     // Ollie
     if (input.ollie && this.isGrounded) {
