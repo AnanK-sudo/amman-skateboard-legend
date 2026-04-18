@@ -29,6 +29,10 @@ import { ComboTimer } from '@/ui/ComboTimer';
 import { Customization } from '@/player/Customization';
 import { CustomizeMenu } from '@/ui/CustomizeMenu';
 import { StatsTracker } from '@/progression/StatsTracker';
+import { BoardTrail } from '@/effects/BoardTrail';
+import { TrickListOverlay } from '@/ui/TrickListOverlay';
+import { Minimap } from '@/ui/Minimap';
+import { ZoneTransition } from '@/effects/ZoneTransition';
 
 // --- Renderer ---
 const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
@@ -120,6 +124,12 @@ speedLinesEl.style.cssText = `
   opacity:0;transition:opacity 0.3s;z-index:1;
 `;
 document.getElementById('hud')!.appendChild(speedLinesEl);
+
+// --- New effects ---
+const boardTrail = new BoardTrail(scene);
+const trickList = new TrickListOverlay();
+const minimap = new Minimap();
+const zoneTransition = new ZoneTransition();
 
 // --- Customization ---
 const customization = new Customization();
@@ -341,19 +351,32 @@ engine = new Engine({
       return;
     }
 
-    // --- Zone switching (Tab, debug) ---
+    // --- Trick list toggle (T key) ---
+    if (input.justPressed('KeyT')) {
+      trickList.toggle();
+      if (trickList.isVisible) { engine.pause(); } else { engine.resume(); }
+      input.update();
+      return;
+    }
+
+    // --- Zone switching (Tab) ---
     if (input.justPressed('Tab')) {
       currentZoneIndex = (currentZoneIndex + 1) % zoneIds.length;
       const nextZoneId = zoneIds[currentZoneIndex];
       if (unlockManager.isZoneUnlocked(nextZoneId)) {
-        zoneManager.switchTo(nextZoneId);
-        grindDetector.clear(); // clear old zone grindables
-        registerGrindables(); // register new zone grindables
         const zone = zoneManager.getZone(nextZoneId)!;
-        hud.updateZone(zone.config.name);
-        const spawn = zone.config.spawnPoint;
-        skater.body.position.set(spawn.x, spawn.y, spawn.z);
-        skater.body.velocity.setZero();
+        // Zone transition animation
+        engine.pause();
+        zoneTransition.play(zone.config.name).then(() => {
+          zoneManager.switchTo(nextZoneId);
+          grindDetector.clear();
+          registerGrindables();
+          hud.updateZone(zone.config.name);
+          const spawn = zone.config.spawnPoint;
+          skater.body.position.set(spawn.x, spawn.y, spawn.z);
+          skater.body.velocity.setZero();
+          engine.resume();
+        });
       }
     }
 
@@ -556,6 +579,12 @@ engine = new Engine({
     // Speed lines intensity based on speed
     const speedRatio = skater.speed / skater.maxSpeed;
     speedLinesEl.style.opacity = speedRatio > 0.5 ? String((speedRatio - 0.5) * 2 * 0.6) : '0';
+
+    // Board trail
+    boardTrail.update(skater.position, skater.speed);
+
+    // Minimap
+    minimap.update(skater.position.x, skater.position.z, skater.yaw);
 
     // --- Rolling sound ---
     if (skater.isGrounded && skater.speed > 0.5) {
