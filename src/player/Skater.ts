@@ -146,19 +146,33 @@ export class Skater {
 
     const forward = new CANNON.Vec3(-Math.sin(this._yaw), 0, -Math.cos(this._yaw));
 
-    // Push forward
-    if (input.forward && this.speed < this.maxSpeed) {
-      this.body.applyForce(forward.scale(this.pushForce * this.body.mass));
+    // Push forward — directly set velocity for responsive controls
+    if (input.forward) {
+      const targetSpeed = this.maxSpeed;
+      const currentVelX = this.body.velocity.x;
+      const currentVelZ = this.body.velocity.z;
+      const accel = this.pushForce * delta;
+      this.body.velocity.x += forward.x * accel;
+      this.body.velocity.z += forward.z * accel;
+      // Clamp horizontal speed
+      const hSpeed = Math.sqrt(this.body.velocity.x ** 2 + this.body.velocity.z ** 2);
+      if (hSpeed > targetSpeed) {
+        const scale = targetSpeed / hSpeed;
+        this.body.velocity.x *= scale;
+        this.body.velocity.z *= scale;
+      }
     }
 
-    // Brake
+    // Brake — reduce horizontal velocity
     if (input.backward) {
-      const vel = this.body.velocity;
-      const brakeVec = new CANNON.Vec3(-vel.x, 0, -vel.z);
-      if (brakeVec.length() > 0.1) {
-        brakeVec.normalize();
-        this.body.applyForce(brakeVec.scale(this.brakeForce * this.body.mass));
-      }
+      this.body.velocity.x *= (1 - this.brakeForce * delta);
+      this.body.velocity.z *= (1 - this.brakeForce * delta);
+    }
+
+    // Natural friction when not pushing
+    if (!input.forward && !input.backward && this.isGrounded) {
+      this.body.velocity.x *= 0.98;
+      this.body.velocity.z *= 0.98;
     }
 
     // Ollie

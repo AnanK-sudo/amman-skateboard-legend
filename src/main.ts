@@ -118,6 +118,9 @@ const hud = new HUD();
 hud.updateZone('Skate Park');
 hud.updateScore(totalScore);
 
+// --- Engine (declared early so menus can reference it) ---
+let engine: Engine;
+
 // --- Menus ---
 const pauseMenu = new PauseMenu({
   onResume: () => {
@@ -144,8 +147,7 @@ const mainMenu = new MainMenu({
   },
 });
 
-// --- Engine ---
-const engine = new Engine({
+engine = new Engine({
   update: (delta) => {
     // --- Pause toggle ---
     if (input.justPressed('Escape')) {
@@ -268,5 +270,23 @@ window.addEventListener('resize', () => {
   followCam.camera.aspect = window.innerWidth / window.innerHeight;
   followCam.camera.updateProjectionMatrix();
 });
+
+// Debug: show position and speed on screen
+const debugEl = document.createElement('div');
+Object.assign(debugEl.style, {
+  position: 'absolute', bottom: '50px', left: '16px',
+  color: '#3fb950', fontFamily: 'monospace', fontSize: '11px',
+  pointerEvents: 'none', zIndex: '999',
+});
+document.getElementById('hud')!.appendChild(debugEl);
+
+// Update debug info every frame via a second rAF (runs even when engine is paused)
+function debugLoop() {
+  const p = skater.body.position;
+  const v = skater.body.velocity;
+  debugEl.textContent = `pos: ${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)} | vel: ${v.x.toFixed(1)}, ${v.y.toFixed(1)}, ${v.z.toFixed(1)} | spd: ${skater.speed.toFixed(1)} | grnd: ${skater.isGrounded}`;
+  requestAnimationFrame(debugLoop);
+}
+debugLoop();
 
 console.log('ANAN SKATE — click to start, WASD to move, Space to ollie, Enter to cash out combo, Tab to switch zones, Escape to pause');
