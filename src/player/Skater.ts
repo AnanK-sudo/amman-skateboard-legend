@@ -28,7 +28,14 @@ export class Skater {
   private rightLeg: THREE.Mesh;
   private torso: THREE.Mesh;
   private head: THREE.Mesh;
+  private leftShoe: THREE.Mesh;
+  private rightShoe: THREE.Mesh;
   private wheels: THREE.Mesh[] = [];
+
+  // Bail state
+  private _isBailing = false;
+  private bailTimer = 0;
+  private bailDuration = 1.5;
 
   private _yaw = 0;
   private _speed = 0;
@@ -82,7 +89,7 @@ export class Skater {
 
     // Torso
     this.torso = new THREE.Mesh(
-      new THREE.BoxGeometry(0.5, 1.0, 0.3),
+      new THREE.BoxGeometry(0.55, 1.0, 0.3),
       new THREE.MeshStandardMaterial({ color: 0xff6b35 })
     );
     this.torso.position.y = 1.2;
@@ -95,6 +102,14 @@ export class Skater {
     );
     this.head.position.y = 1.85;
     this.innerGroup.add(this.head);
+
+    // Cap/hat on top of head
+    const cap = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.15, 0.15, 0.04, 12),
+      new THREE.MeshStandardMaterial({ color: 0xff6b35 })
+    );
+    cap.position.y = 2.04;
+    this.innerGroup.add(cap);
 
     // Arms — stored as fields for animation
     const armGeo = new THREE.BoxGeometry(0.15, 0.6, 0.15);
@@ -115,6 +130,16 @@ export class Skater {
     this.rightLeg = new THREE.Mesh(legGeo, legMat);
     this.rightLeg.position.set(0.12, 0.4, 0);
     this.innerGroup.add(this.rightLeg);
+
+    // Shoes at the bottom of each leg
+    const shoeGeo = new THREE.BoxGeometry(0.2, 0.08, 0.25);
+    const shoeMat = new THREE.MeshStandardMaterial({ color: 0x222222 });
+    this.leftShoe = new THREE.Mesh(shoeGeo, shoeMat);
+    this.leftShoe.position.set(-0.12, 0.08, 0.03);
+    this.innerGroup.add(this.leftShoe);
+    this.rightShoe = new THREE.Mesh(shoeGeo, shoeMat);
+    this.rightShoe.position.set(0.12, 0.08, 0.03);
+    this.innerGroup.add(this.rightShoe);
 
     // Board group
     this.boardGroup = new THREE.Group();
@@ -154,6 +179,14 @@ export class Skater {
   }
   get isGrounded(): boolean { return !this.airborne; }
   get speed(): number { return this._speed; }
+  get isBailing(): boolean { return this._isBailing; }
+
+  triggerBail(): void {
+    if (this._isBailing) return;
+    this._isBailing = true;
+    this.bailTimer = 0;
+    this._speed *= 0.2; // massive speed penalty
+  }
 
   playTrick(trick: TrickAnim): void {
     if (trick === 'none') return;
@@ -167,6 +200,58 @@ export class Skater {
 
   update(delta: number, input: SkaterInput): void {
     this.animTime += delta;
+
+    // --- Bail state: tumble animation, skip normal logic ---
+    if (this._isBailing) {
+      this.bailTimer += delta;
+      // Tumble: rapidly rotate innerGroup on X and Z
+      this.innerGroup.rotation.x += delta * 8;
+      this.innerGroup.rotation.z += delta * 5;
+
+      // Still apply gravity while bailing
+      if (this.airborne) {
+        this.verticalVel -= 9.82 * delta * 2;
+        this.body.position.y += this.verticalVel * delta;
+
+        // Raycast to find ground
+        const rayFrom = new CANNON.Vec3(this.body.position.x, this.body.position.y + 2, this.body.position.z);
+        const rayTo = new CANNON.Vec3(this.body.position.x, -10, this.body.position.z);
+        const rayResult = new CANNON.RaycastResult();
+        this.body.collisionFilterGroup = 2;
+        this.body.collisionFilterMask = 1;
+        this.world.raycastClosest(rayFrom, rayTo, {
+          skipBackfaces: true,
+          collisionFilterGroup: 1,
+          collisionFilterMask: 1,
+        }, rayResult);
+        if (rayResult.hasHit && rayResult.hitPointWorld) {
+          this.groundY = rayResult.hitPointWorld.y;
+        }
+        const feetHeight = this.groundY + this.HALF_HEIGHT;
+        if (this.body.position.y <= feetHeight) {
+          this.body.position.y = feetHeight;
+          this.verticalVel = 0;
+          this.airborne = false;
+        }
+      }
+
+      if (this.bailTimer >= this.bailDuration) {
+        this._isBailing = false;
+        this.bailTimer = 0;
+        this.innerGroup.rotation.set(0, 0, 0);
+        this.innerGroup.position.set(0, 0, 0);
+        this.boardGroup.rotation.set(0, 0, 0);
+      }
+
+      // Sync mesh while bailing
+      this.body.position.x += (-Math.sin(this._yaw)) * this._speed * delta;
+      this.body.position.z += (-Math.cos(this._yaw)) * this._speed * delta;
+      this._speed *= (1 - 4 * delta);
+      if (this._speed < 0.01) this._speed = 0;
+      this.mesh.position.set(this.body.position.x, this.body.position.y - this.HALF_HEIGHT, this.body.position.z);
+      this.mesh.rotation.y = this._yaw;
+      return;
+    }
 
     // --- Turning (smooth) ---
     const turnInput = (input.left ? 1 : 0) - (input.right ? 1 : 0);

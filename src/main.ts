@@ -16,6 +16,9 @@ import { SaveManager } from '@/progression/SaveManager';
 import { ChallengeManager, Challenge } from '@/progression/ChallengeManager';
 import { UnlockManager } from '@/progression/UnlockManager';
 import { GrindDetector } from '@/player/GrindDetector';
+import { AudioManager } from '@/core/AudioManager';
+import { SparkSystem } from '@/effects/SparkSystem';
+import { CameraShake } from '@/effects/CameraShake';
 
 // --- Renderer ---
 const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
@@ -23,6 +26,9 @@ const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setClearColor(0x1a1a2e);
 renderer.shadowMap.enabled = true;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.2;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
 
 // --- Scene & Lighting ---
 const scene = new THREE.Scene();
@@ -84,6 +90,15 @@ scene.add(skater.mesh);
 
 // --- Grind Detector ---
 const grindDetector = new GrindDetector();
+
+// --- Audio ---
+const audio = new AudioManager();
+let rollSound: ReturnType<typeof audio.playRollLoop> = null;
+let grindSound: ReturnType<typeof audio.playGrindLoop> = null;
+
+// --- Effects ---
+const sparks = new SparkSystem(scene);
+const cameraShake = new CameraShake();
 
 // Scan scene for objects with grindPath and register them
 function registerGrindables() {
@@ -274,26 +289,26 @@ engine = new Engine({
     // J = kickflip, K = heelflip, Space = plain ollie
     // J+K = tre flip, Shift = manual, L = grab (air), A/D in air = spin
 
-    if (skater.isGrounded) {
+    if (skater.isGrounded && !skater.isBailing) {
       if (input.justPressed('KeyJ') && input.isDown('KeyK')) {
-        // J+K together = tre flip
-        skater.body.velocity.y = 6; // auto-ollie
+        skater.body.velocity.y = 6;
         trickSystem.landTrick('tre_flip');
         skater.playTrick('tre_flip');
+        audio.playOlliePop(); audio.playFlipSwoosh();
       } else if (input.justPressed('KeyJ')) {
-        // J = kickflip
         skater.body.velocity.y = 6;
         trickSystem.landTrick('kickflip');
         skater.playTrick('kickflip');
+        audio.playOlliePop(); audio.playFlipSwoosh();
       } else if (input.justPressed('KeyK')) {
-        // K = heelflip
         skater.body.velocity.y = 6;
         trickSystem.landTrick('heelflip');
         skater.playTrick('heelflip');
+        audio.playOlliePop(); audio.playFlipSwoosh();
       } else if (input.justPressed('Space')) {
-        // Space = plain ollie
         trickSystem.landTrick('ollie');
         skater.playTrick('ollie');
+        audio.playOlliePop();
       }
 
       // Shift = manual (ground only)
@@ -345,15 +360,20 @@ engine = new Engine({
       delta
     );
     if (grindResult) {
-      // Snap skater to rail
       skater.body.position.set(grindResult.position.x, grindResult.position.y, grindResult.position.z);
-      if (!grindDetector.isGrinding) {
-        // Just finished grinding
-      } else if (grindDetector.grindProgress < 0.05) {
-        // Just started grinding — register trick
-        trickSystem.landTrick('fifty_fifty');
-        skater.playTrick('manual'); // visual: balance pose
+      if (grindDetector.isGrinding) {
+        // Sparks while grinding
+        sparks.emit(grindResult.position.x, grindResult.position.y, grindResult.position.z, 3);
+        // Start grind sound
+        if (!grindSound) grindSound = audio.playGrindLoop();
+        if (grindDetector.grindProgress < 0.05) {
+          trickSystem.landTrick('fifty_fifty');
+          skater.playTrick('manual');
+        }
       }
+    } else {
+      // Stop grind sound when not grinding
+      if (grindSound) { grindSound.stop(); grindSound = null; }
     }
 
     // Notify challenge manager of tricks landed
@@ -389,28 +409,56 @@ engine = new Engine({
       SaveManager.save(save);
     }
 
-    // --- Auto cash out combo on landing ---
-    if (wasAirborne && skater.isGrounded && trickSystem.comboActive) {
-      const comboScore = trickSystem.cashOut();
-      if (comboScore > 0) {
-        totalScore += comboScore;
-        hud.updateScore(totalScore);
+    // --- Landing detection ---
+    if (wasAirborne && skater.isGrounded) {
+      audio.playLand(0.5);
+      cameraShake.trigger(0.15);
+      emitDust(skater.position.x, 0.05, skater.position.z);
+      emitDust(skater.position.x, 0.05, skater.position.z);
+
+      // Bail check: high speed landing from height = bail (20% chance at high speed)
+      if (skater.speed > 10 && Math.random() < 0.15) {
+        skater.triggerBail();
+        trickSystem.bail();
         hud.updateCombo([], 0, 0);
-        challengeManager.onComboCashed(comboScore);
-        save.highScore = Math.max(save.highScore, totalScore);
-        save.completedChallenges = challengeManager.completedIds;
-        save.unlockedZones = unlockManager.unlockedZones;
-        unlockManager.updateCompleted(challengeManager.completedIds);
-        SaveManager.save(save);
-        // Dust burst on landing
-        emitDust(skater.position.x, 0.05, skater.position.z);
-        emitDust(skater.position.x, 0.05, skater.position.z);
+        hud.flashTrick('BAIL', 0);
+        audio.playBail();
+        cameraShake.trigger(0.4);
+      } else if (trickSystem.comboActive) {
+        // Cash out combo on clean landing
+        const comboScore = trickSystem.cashOut();
+        if (comboScore > 0) {
+          totalScore += comboScore;
+          hud.updateScore(totalScore);
+          hud.updateCombo([], 0, 0);
+          challengeManager.onComboCashed(comboScore);
+          audio.playScoreDing();
+          cameraShake.trigger(0.08);
+          save.highScore = Math.max(save.highScore, totalScore);
+          save.completedChallenges = challengeManager.completedIds;
+          save.unlockedZones = unlockManager.unlockedZones;
+          unlockManager.updateCompleted(challengeManager.completedIds);
+          SaveManager.save(save);
+        }
       }
     }
     wasAirborne = !skater.isGrounded;
 
     // --- Speed HUD ---
     hud.updateSpeed(skater.speed / skater.maxSpeed);
+
+    // --- Update effects ---
+    sparks.update(delta);
+    const shakeOffset = cameraShake.update(delta);
+    followCam.camera.position.add(shakeOffset);
+
+    // --- Rolling sound ---
+    if (skater.isGrounded && skater.speed > 0.5) {
+      if (!rollSound) rollSound = audio.playRollLoop();
+      rollSound?.update(skater.speed);
+    } else {
+      if (rollSound) { rollSound.stop(); rollSound = null; }
+    }
 
     // --- Blob shadow follows skater ---
     blobShadow.position.set(skater.position.x, 0.02, skater.position.z);
