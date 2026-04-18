@@ -197,16 +197,23 @@ export class Skater {
     this.body.position.x += forward.x * this._speed * delta;
     this.body.position.z += forward.z * this._speed * delta;
 
-    // --- Ground following via raycast ---
+    // --- Ground following via raycast (skip own body) ---
+    // Put skater in collision group 2, raycast only against group 1 (world)
     const rayFrom = new CANNON.Vec3(this.body.position.x, this.body.position.y + 2, this.body.position.z);
-    const rayTo = new CANNON.Vec3(this.body.position.x, this.body.position.y - 5, this.body.position.z);
+    const rayTo = new CANNON.Vec3(this.body.position.x, -10, this.body.position.z);
     const rayResult = new CANNON.RaycastResult();
-    const hasHit = this.world.raycastClosest(rayFrom, rayTo, { skipBackfaces: true }, rayResult);
+    this.body.collisionFilterGroup = 2;
+    this.body.collisionFilterMask = 1;
+    const hasHit = this.world.raycastClosest(rayFrom, rayTo, {
+      skipBackfaces: true,
+      collisionFilterGroup: 1,
+      collisionFilterMask: 1, // only hit group 1 (static world bodies)
+    }, rayResult);
 
-    if (hasHit && rayResult.hitPointWorld) {
+    if (hasHit && rayResult.hitPointWorld && rayResult.body !== this.body) {
       this.groundY = rayResult.hitPointWorld.y;
     } else {
-      this.groundY = 0; // fallback to flat ground
+      this.groundY = 0;
     }
 
     const feetHeight = this.groundY + 0.9; // half-height of physics box
