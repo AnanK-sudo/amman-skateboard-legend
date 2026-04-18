@@ -2,6 +2,7 @@ export interface PauseMenuCallbacks {
   onResume: () => void;
   onRestart: () => void;
   onQuitToMenu: () => void;
+  onCustomize?: () => void;
 }
 
 export class PauseMenu {

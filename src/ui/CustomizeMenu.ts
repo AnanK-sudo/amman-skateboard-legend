@@ -6,6 +6,10 @@ export class CustomizeMenu {
   private customization: Customization;
   private onApply: () => void;
 
+  private onClose: (() => void) | null = null;
+
+  setOnClose(cb: () => void): void { this.onClose = cb; }
+
   constructor(customization: Customization, onApply: () => void) {
     this.customization = customization;
     this.onApply = onApply;
@@ -72,7 +76,10 @@ export class CustomizeMenu {
       font-size: 18px; color: #0d0d0d; background: #3fb950; border: none;
       border-radius: 4px; cursor: pointer; letter-spacing: 3px;
     `;
-    closeBtn.addEventListener('click', () => this.hide());
+    closeBtn.addEventListener('click', () => {
+      this.hide();
+      if (this.onClose) this.onClose();
+    });
     this.overlay.appendChild(closeBtn);
 
     document.body.appendChild(this.overlay);

@@ -259,6 +259,10 @@ const pauseMenu = new PauseMenu({
     mainMenu.show();
     engine.pause();
   },
+  onCustomize: () => {
+    pauseMenu.hide();
+    customizeMenu.show();
+  },
 });
 
 const mainMenu = new MainMenu({
@@ -268,7 +272,7 @@ const mainMenu = new MainMenu({
   },
 });
 
-// Customize menu
+// Customize menu — DONE returns to pause menu
 const customizeMenu = new CustomizeMenu(customization, () => {
   // Apply style to skater — safely traverse to find groups
   try {
@@ -284,6 +288,17 @@ const customizeMenu = new CustomizeMenu(customization, () => {
     }
     if (board) customization.applyToSkater(inner, board);
   } catch (e) { console.warn('Customize apply failed:', e); }
+});
+customizeMenu.setOnClose(() => {
+  pauseMenu.show(); // return to pause menu
+});
+
+// Also listen for Escape while customize is open (engine is paused, so we use DOM listener)
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Escape' && customizeMenu.isVisible) {
+    customizeMenu.hide();
+    pauseMenu.show();
+  }
 });
 
 engine = new Engine({
