@@ -26,15 +26,25 @@ renderer.shadowMap.enabled = true;
 // --- Scene & Lighting ---
 const scene = new THREE.Scene();
 
-const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
 dirLight.position.set(10, 20, 10);
 dirLight.castShadow = true;
+dirLight.shadow.mapSize.width = 2048;
+dirLight.shadow.mapSize.height = 2048;
+dirLight.shadow.camera.near = 0.5;
+dirLight.shadow.camera.far = 100;
+dirLight.shadow.camera.left = -30;
+dirLight.shadow.camera.right = 30;
+dirLight.shadow.camera.top = 30;
+dirLight.shadow.camera.bottom = -30;
 scene.add(dirLight);
-scene.add(new THREE.AmbientLight(0x404040, 0.6));
+scene.add(new THREE.AmbientLight(0x606080, 0.8));
+// Hemisphere light for sky/ground color blend
+scene.add(new THREE.HemisphereLight(0x8888ff, 0x444422, 0.5));
 
 // --- Physics ---
 const physics = new PhysicsWorld();
-// NOTE: Ground plane is provided by each zone; do not create a global ground here.
+physics.createGroundPlane(); // Global infinite ground for skater to stand on
 
 // --- Zone System ---
 const zoneManager = new ZoneManager(scene, physics.world);
@@ -233,7 +243,8 @@ const engine = new Engine({
   render: () => { renderer.render(scene, followCam.camera); },
 });
 
-// Start paused on main menu
+// Start the engine loop, but paused on main menu
+engine.start();
 engine.pause();
 mainMenu.show();
 
