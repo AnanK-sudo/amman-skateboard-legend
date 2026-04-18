@@ -78,12 +78,23 @@ zoneManager.switchTo('skate_park');
 const zoneIds = ['skate_park', 'street', 'old_amman'] as const;
 let currentZoneIndex = 0;
 
-// --- Skater ---
+// --- Skater --- (must be after zone load so grindables can be registered after)
 const skater = new Skater(physics.world);
 scene.add(skater.mesh);
 
 // --- Grind Detector ---
 const grindDetector = new GrindDetector();
+
+// Scan scene for objects with grindPath and register them
+function registerGrindables() {
+  scene.traverse((obj: any) => {
+    if (obj.userData?.grindPath) {
+      grindDetector.register({ grindPath: obj.userData.grindPath });
+    }
+  });
+}
+registerGrindables(); // register initial zone grindables
+
 
 // --- Blob shadow under skater ---
 const shadowTex = new THREE.TextureLoader().load(
@@ -242,9 +253,10 @@ engine = new Engine({
       const nextZoneId = zoneIds[currentZoneIndex];
       if (unlockManager.isZoneUnlocked(nextZoneId)) {
         zoneManager.switchTo(nextZoneId);
+        grindDetector.clear(); // clear old zone grindables
+        registerGrindables(); // register new zone grindables
         const zone = zoneManager.getZone(nextZoneId)!;
         hud.updateZone(zone.config.name);
-        // Reset skater to zone spawn
         const spawn = zone.config.spawnPoint;
         skater.body.position.set(spawn.x, spawn.y, spawn.z);
         skater.body.velocity.setZero();

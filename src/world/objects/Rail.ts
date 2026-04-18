@@ -68,14 +68,17 @@ export class Rail {
     this.grindPath = {
       start: new THREE.Vector3(
         position.x - halfLen * cosR,
-        position.y,
+        position.y + height,
         position.z + halfLen * sinR,
       ),
       end: new THREE.Vector3(
         position.x + halfLen * cosR,
-        position.y,
+        position.y + height,
         position.z - halfLen * sinR,
       ),
     };
+
+    // Store grindPath on mesh userData so scene traversal can find it
+    this.mesh.userData.grindPath = this.grindPath;
   }
 }

@@ -66,5 +66,8 @@ export class Ledge {
         position.z - halfLen * sinR,
       ),
     };
+
+    // Store grindPath on mesh userData so scene traversal can find it
+    this.mesh.userData.grindPath = this.grindPath;
   }
 }
