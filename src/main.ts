@@ -26,6 +26,11 @@ renderer.shadowMap.enabled = true;
 // --- Scene & Lighting ---
 const scene = new THREE.Scene();
 
+// --- Sky gradient background ---
+scene.background = new THREE.Color(0x0a0a1a);
+scene.fog = new THREE.FogExp2(0x0a0a1a, 0.012); // distance fog
+
+// --- Lighting ---
 const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
 dirLight.position.set(10, 20, 10);
 dirLight.castShadow = true;
@@ -39,8 +44,24 @@ dirLight.shadow.camera.top = 30;
 dirLight.shadow.camera.bottom = -30;
 scene.add(dirLight);
 scene.add(new THREE.AmbientLight(0x606080, 0.8));
-// Hemisphere light for sky/ground color blend
 scene.add(new THREE.HemisphereLight(0x8888ff, 0x444422, 0.5));
+
+// --- Stars / atmosphere ---
+const starGeo = new THREE.BufferGeometry();
+const starPositions: number[] = [];
+for (let i = 0; i < 300; i++) {
+  const r = 80 + Math.random() * 120;
+  const theta = Math.random() * Math.PI * 2;
+  const phi = Math.random() * Math.PI * 0.5; // upper hemisphere
+  starPositions.push(
+    r * Math.sin(phi) * Math.cos(theta),
+    r * Math.cos(phi) + 10,
+    r * Math.sin(phi) * Math.sin(theta)
+  );
+}
+starGeo.setAttribute('position', new THREE.Float32BufferAttribute(starPositions, 3));
+const starMat = new THREE.PointsMaterial({ color: 0xffffff, size: 0.3, transparent: true, opacity: 0.6 });
+scene.add(new THREE.Points(starGeo, starMat));
 
 // --- Physics ---
 const physics = new PhysicsWorld();
@@ -59,6 +80,47 @@ let currentZoneIndex = 0;
 // --- Skater ---
 const skater = new Skater(physics.world);
 scene.add(skater.mesh);
+
+// --- Blob shadow under skater ---
+const shadowTex = new THREE.TextureLoader().load(
+  'data:image/svg+xml,' + encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><radialGradient id="g" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="black" stop-opacity="0.5"/><stop offset="100%" stop-color="black" stop-opacity="0"/></radialGradient><circle cx="32" cy="32" r="32" fill="url(#g)"/></svg>'
+  )
+);
+const blobShadow = new THREE.Mesh(
+  new THREE.PlaneGeometry(1.5, 1.5),
+  new THREE.MeshBasicMaterial({ map: shadowTex, transparent: true, depthWrite: false })
+);
+blobShadow.rotation.x = -Math.PI / 2;
+scene.add(blobShadow);
+
+// --- Dust particle system ---
+const dustCount = 50;
+const dustGeo = new THREE.BufferGeometry();
+const dustPositions = new Float32Array(dustCount * 3);
+const dustVelocities = new Float32Array(dustCount * 3);
+const dustLifetimes = new Float32Array(dustCount);
+dustGeo.setAttribute('position', new THREE.Float32BufferAttribute(dustPositions, 3));
+const dustMat = new THREE.PointsMaterial({
+  color: 0x888888, size: 0.15, transparent: true, opacity: 0.4, depthWrite: false,
+});
+const dustParticles = new THREE.Points(dustGeo, dustMat);
+scene.add(dustParticles);
+let dustIndex = 0;
+
+function emitDust(x: number, y: number, z: number) {
+  for (let i = 0; i < 5; i++) {
+    const idx = (dustIndex % dustCount) * 3;
+    dustPositions[idx] = x + (Math.random() - 0.5) * 0.5;
+    dustPositions[idx + 1] = y;
+    dustPositions[idx + 2] = z + (Math.random() - 0.5) * 0.5;
+    dustVelocities[idx] = (Math.random() - 0.5) * 2;
+    dustVelocities[idx + 1] = Math.random() * 1.5 + 0.5;
+    dustVelocities[idx + 2] = (Math.random() - 0.5) * 2;
+    dustLifetimes[dustIndex % dustCount] = 1.0;
+    dustIndex++;
+  }
+}
 
 // --- Camera ---
 const followCam = new FollowCamera(window.innerWidth / window.innerHeight);
@@ -117,6 +179,11 @@ const unlockManager = new UnlockManager(save.completedChallenges);
 const hud = new HUD();
 hud.updateZone('Skate Park');
 hud.updateScore(totalScore);
+
+// --- Trick input window state ---
+let ollieTime = 0;
+let didOllie = false;
+let spinRegistered = false;
 
 // --- Engine (declared early so menus can reference it) ---
 let engine: Engine;
@@ -185,9 +252,19 @@ engine = new Engine({
     physics.step(delta);
     followCam.update(delta, skater.position, skater.speed, skater.maxSpeed);
 
-    // --- Trick detection ---
+    // --- Trick detection (window-based) ---
+    // Press Space to ollie, then press J/K within 300ms for flip tricks
     if (input.justPressed('Space') && skater.isGrounded) {
-      if (input.isDown('KeyJ')) {
+      ollieTime = performance.now();
+      didOllie = true;
+      // Don't register trick yet — wait for possible J/K input
+    }
+
+    const timeSinceOllie = performance.now() - ollieTime;
+    const inTrickWindow = didOllie && timeSinceOllie < 350;
+
+    if (inTrickWindow) {
+      if (input.justPressed('KeyJ')) {
         if (input.isDown('KeyA') || input.isDown('KeyD')) {
           trickSystem.landTrick('tre_flip');
           skater.playTrick('tre_flip');
@@ -195,29 +272,46 @@ engine = new Engine({
           trickSystem.landTrick('kickflip');
           skater.playTrick('kickflip');
         }
-      } else if (input.isDown('KeyK')) {
+        didOllie = false; // consumed
+      } else if (input.justPressed('KeyK')) {
         trickSystem.landTrick('heelflip');
         skater.playTrick('heelflip');
-      } else {
-        trickSystem.landTrick('ollie');
-        skater.playTrick('ollie');
+        didOllie = false;
       }
     }
 
+    // If ollie window expired without J/K, register as plain ollie
+    if (didOllie && timeSinceOllie >= 350) {
+      trickSystem.landTrick('ollie');
+      skater.playTrick('ollie');
+      didOllie = false;
+    }
+
+    // Manual
     if (input.justPressed('ShiftLeft') || input.justPressed('ShiftRight')) {
       trickSystem.landTrick('manual');
       skater.playTrick('manual');
     }
 
-    // Grab in air
-    if (input.isDown('KeyL') && !skater.isGrounded) {
+    // Grab in air (hold L)
+    if (input.justPressed('KeyL') && !skater.isGrounded) {
+      trickSystem.landTrick('grab');
       skater.playTrick('grab');
     }
 
-    // Spin in air
-    if ((input.isDown('KeyA') || input.isDown('KeyD')) && !skater.isGrounded) {
-      skater.playTrick('spin');
+    // Spin in air (A/D while airborne)
+    if (!skater.isGrounded && !spinRegistered) {
+      if (input.justPressed('KeyA')) {
+        trickSystem.landTrick('spin_180');
+        skater.playTrick('spin');
+        spinRegistered = true;
+      } else if (input.justPressed('KeyD')) {
+        trickSystem.landTrick('spin_360');
+        skater.playTrick('spin');
+        spinRegistered = true;
+      }
     }
+    if (skater.isGrounded) spinRegistered = false;
 
     // Notify challenge manager of tricks landed
     if (trickSystem.lastTrick) {
@@ -254,6 +348,39 @@ engine = new Engine({
 
     // --- Speed HUD ---
     hud.updateSpeed(skater.speed / skater.maxSpeed);
+
+    // --- Blob shadow follows skater ---
+    blobShadow.position.set(skater.position.x, 0.02, skater.position.z);
+    // Scale shadow based on height (smaller when higher = further from ground)
+    const shadowScale = Math.max(0.3, 1 - (skater.position.y - 0.9) * 0.15);
+    blobShadow.scale.set(shadowScale, shadowScale, shadowScale);
+
+    // --- Dust particles update ---
+    if (skater.speed > 2 && skater.isGrounded && Math.random() < 0.3) {
+      emitDust(skater.position.x, 0.05, skater.position.z);
+    }
+    for (let i = 0; i < dustCount; i++) {
+      if (dustLifetimes[i] > 0) {
+        const idx = i * 3;
+        dustPositions[idx] += dustVelocities[idx] * delta;
+        dustPositions[idx + 1] += dustVelocities[idx + 1] * delta;
+        dustPositions[idx + 2] += dustVelocities[idx + 2] * delta;
+        dustVelocities[idx + 1] -= 2 * delta; // gravity on particles
+        dustLifetimes[i] -= delta * 2;
+        if (dustLifetimes[i] <= 0) {
+          dustPositions[idx + 1] = -100; // hide expired
+        }
+      }
+    }
+    dustGeo.attributes.position.needsUpdate = true;
+
+    // --- World boundary (keep skater in play area) ---
+    const boundary = 38;
+    const pos = skater.body.position;
+    if (pos.x > boundary) pos.x = boundary;
+    if (pos.x < -boundary) pos.x = -boundary;
+    if (pos.z > boundary) pos.z = boundary;
+    if (pos.z < -boundary) pos.z = -boundary;
 
     input.update();
   },
