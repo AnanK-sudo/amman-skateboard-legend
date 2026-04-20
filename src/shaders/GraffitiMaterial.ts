@@ -90,5 +90,5 @@ export function createConcreteMaterial(baseColor: number): THREE.MeshStandardMat
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
   tex.repeat.set(6, 6);
 
-  return new THREE.MeshStandardMaterial({ map: tex, roughness: 0.92 });
+  return new THREE.MeshStandardMaterial({ map: tex, roughness: 0.72, metalness: 0.04, envMapIntensity: 0.5 });
 }

@@ -529,9 +529,11 @@ export class OldAmman implements Zone {
     this.addBox(scene, world, -25, 0, -16, 0.6, 2.0, 16, wallMat);
     this.addBox(scene, world, 25, 0, -16, 0.6, 2.0, 16, wallMat);
 
-    // Street lamps along the wall
+    // Street lamps along the wall — with warm point lights casting pools on ground
     const lampMat = new THREE.MeshStandardMaterial({ color: 0x888878, roughness: 0.3, metalness: 0.7 });
-    const lampHeadMat = new THREE.MeshStandardMaterial({ color: 0xfff8e0, emissive: 0xfff0a0, emissiveIntensity: 0.6, roughness: 0.5 });
+    const lampHeadMat = new THREE.MeshStandardMaterial({
+      color: 0xfff8e0, emissive: 0xffee88, emissiveIntensity: 2.0, roughness: 0.3
+    });
     for (const lx of [-20, -10, 0, 10, 20]) {
       const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.07, 4.5, 8), lampMat);
       pole.position.set(lx, 2.25, -23.5);
@@ -545,6 +547,12 @@ export class OldAmman implements Zone {
       const head = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.15, 0.3), lampHeadMat);
       head.position.set(lx, 4.42, -22.7);
       this.addMesh(scene, head);
+
+      // Point light — warm golden pool on the ground below
+      const pt = new THREE.PointLight(0xffdd88, 6, 12, 1.8);
+      pt.position.set(lx, 4.0, -22.7);
+      scene.add(pt);
+      this.objects.push(pt);
     }
   }
 

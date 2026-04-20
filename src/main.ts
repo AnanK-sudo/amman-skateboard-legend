@@ -33,6 +33,8 @@ import { BoardTrail } from '@/effects/BoardTrail';
 import { TrickListOverlay } from '@/ui/TrickListOverlay';
 import { Minimap } from '@/ui/Minimap';
 import { ZoneTransition } from '@/effects/ZoneTransition';
+import { Sky } from 'three/addons/objects/Sky.js';
+import { createCinematicPass } from '@/effects/CinematicPass';
 
 // --- Renderer ---
 const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
@@ -40,62 +42,67 @@ const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setClearColor(0xc8b89a); // warm horizon fallback
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap; // soft shadow edges
+renderer.shadowMap.type = THREE.PCFShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.0;
+renderer.toneMappingExposure = 1.25;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 
-// --- Scene & Lighting ---
+// --- Scene ---
 const scene = new THREE.Scene();
 
-// --- Sky dome — vertex-color gradient from warm haze at horizon to deep blue at zenith ---
-const skyGeo = new THREE.SphereGeometry(380, 32, 20);
-const skySphereColors = new Float32Array(skyGeo.attributes.position.count * 3);
-const skyPosAttr = skyGeo.attributes.position as THREE.BufferAttribute;
-for (let i = 0; i < skyPosAttr.count; i++) {
-  const y = skyPosAttr.getY(i);
-  const t = Math.max(0, Math.min(1, (y + 10) / 390)); // 0 = horizon, 1 = zenith
-  const ease = t * t; // quadratic — horizon band wider and warmer
-  // Horizon: warm sandy haze  →  Zenith: deep Amman afternoon blue
-  skySphereColors[i * 3]     = 0.82 + (0.28 - 0.82) * ease; // R
-  skySphereColors[i * 3 + 1] = 0.72 + (0.48 - 0.72) * ease; // G
-  skySphereColors[i * 3 + 2] = 0.55 + (0.72 - 0.55) * ease; // B
-}
-skyGeo.setAttribute('color', new THREE.BufferAttribute(skySphereColors, 3));
-const skyMesh = new THREE.Mesh(
-  skyGeo,
-  new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, depthWrite: false })
-);
-scene.add(skyMesh);
+// --- Atmospheric sky (Three.js Sky shader — real Rayleigh/Mie scattering) ---
+const sky = new Sky();
+sky.scale.setScalar(10000);
+const skyUniforms = (sky.material as THREE.ShaderMaterial).uniforms;
+skyUniforms['turbidity'].value = 2.5;        // clear morning air
+skyUniforms['rayleigh'].value = 1.8;          // vivid blue sky
+skyUniforms['mieCoefficient'].value = 0.015; // morning haze (less than afternoon)
+skyUniforms['mieDirectionalG'].value = 0.9;
 
-// Warm atmospheric fog matching the horizon haze
-scene.fog = new THREE.FogExp2(0xd1bfa0, 0.008);
+// Sun: Amman morning ~20° elevation (golden hour) from ENE
+const sun = new THREE.Vector3();
+const sunPhi   = THREE.MathUtils.degToRad(90 - 22); // low on horizon
+const sunTheta = THREE.MathUtils.degToRad(70);       // ENE
+sun.setFromSphericalCoords(1, sunPhi, sunTheta);
+skyUniforms['sunPosition'].value.copy(sun);
 
-// --- Lighting — 3-point warm afternoon setup ---
-// Key light: warm afternoon sun from the west
-const dirLight = new THREE.DirectionalLight(0xfff0d0, 2.2);
-dirLight.position.set(60, 80, 30);
+// Bake sky into PMREM env map so PBR metals/glass get sky reflections
+const pmrem = new THREE.PMREMGenerator(renderer);
+pmrem.compileEquirectangularShader();
+const _skyEnvScene = new THREE.Scene();
+_skyEnvScene.add(sky);
+scene.environment = pmrem.fromScene(_skyEnvScene, 0.04, 1, 20000).texture;
+pmrem.dispose();
+scene.add(sky); // return sky to main scene
+
+// Morning haze — cool blue-gold, less dense so Amman hillsides stay readable
+scene.fog = new THREE.FogExp2(0xb8c8d8, 0.003);
+
+// --- Lighting — sun-matched 3-point, physically plausible ---
+// Key: warm morning golden-hour sun (low, intense orange-gold)
+const dirLight = new THREE.DirectionalLight(0xffc860, 5.0);
+dirLight.position.copy(sun).multiplyScalar(300);
 dirLight.castShadow = true;
 dirLight.shadow.mapSize.width = 4096;
 dirLight.shadow.mapSize.height = 4096;
 dirLight.shadow.camera.near = 1;
-dirLight.shadow.camera.far = 300;
-dirLight.shadow.camera.left = -60;
-dirLight.shadow.camera.right = 60;
-dirLight.shadow.camera.top = 60;
-dirLight.shadow.camera.bottom = -60;
+dirLight.shadow.camera.far = 400;
+dirLight.shadow.camera.left  = -80;
+dirLight.shadow.camera.right  = 80;
+dirLight.shadow.camera.top    = 80;
+dirLight.shadow.camera.bottom = -80;
 dirLight.shadow.bias = -0.0003;
 scene.add(dirLight);
 
-// Fill light: cool sky bounce from opposite side
-scene.add(new THREE.DirectionalLight(0xc0d8f0, 0.5).position.set(-30, 20, -20) && new THREE.DirectionalLight(0xc0d8f0, 0.5));
-const fillLight = new THREE.DirectionalLight(0xc0d8f0, 0.5);
-fillLight.position.set(-30, 20, -20);
+// Fill: soft blue morning sky bounce from west
+const fillLight = new THREE.DirectionalLight(0xb0d0ff, 1.0);
+fillLight.position.set(-sun.x * 80, 40, -sun.z * 80);
 scene.add(fillLight);
 
-// Hemisphere: warm ground bounce + sky ambient
-scene.add(new THREE.HemisphereLight(0x9bbde8, 0xc4a86c, 0.7));
-scene.add(new THREE.AmbientLight(0xffe8c8, 0.4));
+// Hemisphere: morning sky dome (pale blue) + warm stone ground bounce
+scene.add(new THREE.HemisphereLight(0xb4d4ff, 0xe0c888, 1.1));
+// Warm golden ambient — morning light wraps around everything
+scene.add(new THREE.AmbientLight(0xffe8b0, 0.7));
 
 // --- Physics ---
 const physics = new PhysicsWorld();
@@ -210,11 +217,13 @@ const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, followCam.camera));
 const bloomPass = new UnrealBloomPass(
   new THREE.Vector2(window.innerWidth, window.innerHeight),
-  0.4,   // strength — subtle bloom
-  0.3,   // radius
-  0.85   // threshold — only bright things bloom (neon rails, sparks)
+  0.7,   // strength — stronger glow on neon rails + sun highlights
+  0.6,   // radius
+  0.80   // threshold — neon rails, sparks, sun disc all bloom
 );
 composer.addPass(bloomPass);
+const cinematicPass = createCinematicPass();
+composer.addPass(cinematicPass);
 composer.addPass(new OutputPass());
 
 // --- Input ---
@@ -373,25 +382,22 @@ engine = new Engine({
       return;
     }
 
-    // --- Zone switching (Tab) ---
+    // --- Zone switching (Tab) — all zones open ---
     if (input.justPressed('Tab')) {
       currentZoneIndex = (currentZoneIndex + 1) % zoneIds.length;
       const nextZoneId = zoneIds[currentZoneIndex];
-      if (unlockManager.isZoneUnlocked(nextZoneId)) {
-        const zone = zoneManager.getZone(nextZoneId)!;
-        // Zone transition animation
-        engine.pause();
-        zoneTransition.play(zone.config.name).then(() => {
-          zoneManager.switchTo(nextZoneId);
-          grindDetector.clear();
-          registerGrindables();
-          hud.updateZone(zone.config.name);
-          const spawn = zone.config.spawnPoint;
-          skater.body.position.set(spawn.x, spawn.y, spawn.z);
-          skater.body.velocity.setZero();
-          engine.resume();
-        });
-      }
+      const zone = zoneManager.getZone(nextZoneId)!;
+      engine.pause();
+      zoneTransition.play(zone.config.name).then(() => {
+        zoneManager.switchTo(nextZoneId);
+        grindDetector.clear();
+        registerGrindables();
+        hud.updateZone(zone.config.name);
+        const spawn = zone.config.spawnPoint;
+        skater.body.position.set(spawn.x, spawn.y, spawn.z);
+        skater.body.velocity.setZero();
+        engine.resume();
+      });
     }
 
     // --- Camera & physics ---
@@ -490,8 +496,8 @@ engine = new Engine({
       skater.body.position.set(grindResult.position.x, grindResult.position.y, grindResult.position.z);
       if (grindDetector.isGrinding) {
         grindDistanceAccum += grindDetector.grindSpeed * delta;
-        // Sparks while grinding
-        sparks.emit(grindResult.position.x, grindResult.position.y, grindResult.position.z, 3);
+        // Sparks while grinding — 12 per frame (white-hot core + orange spray)
+        sparks.emit(grindResult.position.x, grindResult.position.y, grindResult.position.z, 12);
         // Start grind sound
         if (!grindSound) grindSound = audio.playGrindLoop();
         // Register trick once at grind start
@@ -601,8 +607,10 @@ engine = new Engine({
     // Always update wasAirborne so it's never stale after bail ends
     if (!skater.isBailing) wasAirborne = !skater.isGrounded;
 
-    // --- Speed HUD ---
+    // --- Speed HUD + cinematic speed effects ---
     hud.updateSpeed(skater.speed / skater.maxSpeed);
+    // Chromatic aberration scales with speed (kicks in above 50%)
+    cinematicPass.uniforms['uSpeed'].value = Math.max(0, (skater.speed / skater.maxSpeed - 0.4) / 0.6);
 
     // --- Update effects ---
     sparks.update(delta);
