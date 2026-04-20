@@ -525,8 +525,8 @@ engine = new Engine({
       SaveManager.save(save);
     }
 
-    // --- Landing detection ---
-    if (wasAirborne && skater.isGrounded) {
+    // --- Landing detection (skip while bailing — bail manages its own airborne state) ---
+    if (wasAirborne && skater.isGrounded && !skater.isBailing) {
       audio.playLand(0.5);
       cameraShake.trigger(0.15);
       emitDust(skater.position.x, 0.05, skater.position.z);
@@ -567,7 +567,8 @@ engine = new Engine({
         }
       }
     }
-    wasAirborne = !skater.isGrounded;
+    // Always update wasAirborne so it's never stale after bail ends
+    if (!skater.isBailing) wasAirborne = !skater.isGrounded;
 
     // --- Speed HUD ---
     hud.updateSpeed(skater.speed / skater.maxSpeed);

@@ -208,31 +208,40 @@ export class Skater {
       this.innerGroup.rotation.x += delta * 8;
       this.innerGroup.rotation.z += delta * 5;
 
-      // Still apply gravity while bailing
-      if (this.airborne) {
-        this.verticalVel -= 9.82 * delta * 2;
-        this.body.position.y += this.verticalVel * delta;
+      // Always apply vertical physics during bail (not just when airborne)
+      // so the character falls correctly if they slide off a ledge mid-bail
+      this.verticalVel -= 9.82 * delta * 2;
+      this.body.position.y += this.verticalVel * delta;
 
-        // Raycast to find ground
-        const rayFrom = new CANNON.Vec3(this.body.position.x, this.body.position.y + 2, this.body.position.z);
-        const rayTo = new CANNON.Vec3(this.body.position.x, -10, this.body.position.z);
-        const rayResult = new CANNON.RaycastResult();
-        this.body.collisionFilterGroup = 2;
-        this.body.collisionFilterMask = 1;
-        this.world.raycastClosest(rayFrom, rayTo, {
-          skipBackfaces: true,
-          collisionFilterGroup: 1,
-          collisionFilterMask: 1,
-        }, rayResult);
-        if (rayResult.hasHit && rayResult.hitPointWorld) {
-          this.groundY = rayResult.hitPointWorld.y;
-        }
-        const feetHeight = this.groundY + this.HALF_HEIGHT;
-        if (this.body.position.y <= feetHeight) {
-          this.body.position.y = feetHeight;
-          this.verticalVel = 0;
-          this.airborne = false;
-        }
+      // Raycast to find ground
+      const bailRayFrom = new CANNON.Vec3(this.body.position.x, this.body.position.y + 2, this.body.position.z);
+      const bailRayTo = new CANNON.Vec3(this.body.position.x, -10, this.body.position.z);
+      const bailRayResult = new CANNON.RaycastResult();
+      this.body.collisionFilterGroup = 2;
+      this.body.collisionFilterMask = 1;
+      this.world.raycastClosest(bailRayFrom, bailRayTo, {
+        skipBackfaces: true,
+        collisionFilterGroup: 1,
+        collisionFilterMask: 1,
+      }, bailRayResult);
+      if (bailRayResult.hasHit && bailRayResult.hitPointWorld) {
+        this.groundY = bailRayResult.hitPointWorld.y;
+      }
+      const bailFeetHeight = this.groundY + this.HALF_HEIGHT;
+      if (this.body.position.y <= bailFeetHeight) {
+        this.body.position.y = bailFeetHeight;
+        this.verticalVel = 0;
+        this.airborne = false;
+      } else {
+        this.airborne = true;
+      }
+
+      // Fall-off-world safety reset
+      if (this.body.position.y < -10) {
+        this.body.position.set(0, 2, 0);
+        this._speed = 0;
+        this.verticalVel = 0;
+        this.airborne = false;
       }
 
       if (this.bailTimer >= this.bailDuration) {
@@ -250,6 +259,9 @@ export class Skater {
       if (this._speed < 0.01) this._speed = 0;
       this.mesh.position.set(this.body.position.x, this.body.position.y - this.HALF_HEIGHT, this.body.position.z);
       this.mesh.rotation.y = this._yaw;
+      // Fix stale wasAirborne: update it here so the landing event doesn't
+      // re-fire on the first normal frame after bail ends
+      // (wasAirborne is set at the bottom of this function, but bail returns early)
       return;
     }
 
