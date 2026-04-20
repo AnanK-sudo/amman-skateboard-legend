@@ -21,6 +21,13 @@ export class TrickSystem {
   get comboChain(): TrickName[] { return [...this.chain]; }
   get lastTrick(): TrickName | null { return this._lastTrickName; }
 
+  // Consume and clear lastTrick so callers only act on it once per landing
+  consumeLastTrick(): TrickName | null {
+    const t = this._lastTrickName;
+    this._lastTrickName = null;
+    return t;
+  }
+
   getBaseScore(name: TrickName): number { return TRICK_SCORES[name]; }
 
   landTrick(name: TrickName): boolean {

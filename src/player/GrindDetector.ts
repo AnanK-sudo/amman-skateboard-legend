@@ -9,8 +9,9 @@ export class GrindDetector {
   private _isGrinding = false;
   private _grindProgress = 0; // 0-1 along the rail
   private _grindTarget: GrindableObject | null = null;
-  private grindSpeed = 8; // meters per second along rail
+  readonly grindSpeed = 8; // meters per second along rail
   private snapDistance = 1.5; // how close to rail to start grinding
+  private snapCooldown = 0; // prevents immediate re-snap after grind ends at rail tip
 
   register(obj: GrindableObject): void {
     this.grindables.push(obj);
@@ -20,6 +21,7 @@ export class GrindDetector {
     this.grindables = [];
     this._isGrinding = false;
     this._grindTarget = null;
+    this.snapCooldown = 0;
   }
 
   get isGrinding(): boolean { return this._isGrinding; }
@@ -32,12 +34,15 @@ export class GrindDetector {
     delta: number
   ): { position: THREE.Vector3; yaw: number } | null {
 
+    if (this.snapCooldown > 0) this.snapCooldown -= delta;
+
     if (this._isGrinding && this._grindTarget) {
       // Continue grinding — move along rail
       this._grindProgress += (this.grindSpeed * delta) / this.getRailLength(this._grindTarget);
 
       if (this._grindProgress >= 1 || !grindInput) {
-        // End grind
+        // End grind — cooldown prevents immediate re-snap on the same rail
+        if (this._grindProgress >= 1) this.snapCooldown = 0.3;
         this._isGrinding = false;
         this._grindTarget = null;
         return null;
@@ -54,8 +59,8 @@ export class GrindDetector {
       return { position: pos, yaw };
     }
 
-    // Not grinding — check if we should start
-    if (grindInput && !this._isGrinding) {
+    // Not grinding — check if we should start (skip during cooldown)
+    if (grindInput && !this._isGrinding && this.snapCooldown <= 0) {
       let closest: GrindableObject | null = null;
       let closestDist = this.snapDistance;
 

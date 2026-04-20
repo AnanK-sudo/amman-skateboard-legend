@@ -69,4 +69,39 @@ describe('TrickSystem', () => {
       expect(tricks.getBaseScore(name)).toBeGreaterThan(0);
     }
   });
+
+  // --- consumeLastTrick ---
+
+  it('consumeLastTrick returns the trick name and clears it', () => {
+    tricks.landTrick('kickflip');
+    expect(tricks.consumeLastTrick()).toBe('kickflip');
+    expect(tricks.consumeLastTrick()).toBeNull(); // cleared — second call returns null
+  });
+
+  it('consumeLastTrick returns null before any trick is landed', () => {
+    expect(tricks.consumeLastTrick()).toBeNull();
+  });
+
+  it('consumeLastTrick is null after bail', () => {
+    tricks.landTrick('ollie');
+    tricks.bail();
+    expect(tricks.consumeLastTrick()).toBeNull();
+  });
+
+  it('consumeLastTrick is null after cashOut', () => {
+    tricks.landTrick('ollie');
+    tricks.cashOut();
+    expect(tricks.consumeLastTrick()).toBeNull();
+  });
+
+  it('calling consumeLastTrick twice does not double-count tricks in challenge scenario', () => {
+    // Simulate the game loop calling consumeLastTrick every frame
+    tricks.landTrick('ollie');
+    const first = tricks.consumeLastTrick();
+    const second = tricks.consumeLastTrick();
+    const third = tricks.consumeLastTrick();
+    expect(first).toBe('ollie');
+    expect(second).toBeNull();
+    expect(third).toBeNull();
+  });
 });

@@ -264,6 +264,7 @@ let ollieTime = 0;
 let didOllie = false;
 let spinRegistered = false;
 let wasAirborne = false;
+let grindDistanceAccum = 0; // meters ground during current grind, for challenge tracking
 
 // --- Engine (declared early so menus can reference it) ---
 let engine: Engine;
@@ -441,13 +442,23 @@ engine = new Engine({
       }
     }
 
-    // Spin in air (A/D while airborne)
+    // Spin in air: A=180, D=360, A+D=540
     if (!skater.isGrounded && !spinRegistered) {
-      if (input.justPressed('KeyA')) {
+      const spinA = input.justPressed('KeyA');
+      const spinD = input.justPressed('KeyD');
+      if (spinA && input.isDown('KeyD')) {
+        trickSystem.landTrick('spin_540');
+        skater.playTrick('spin');
+        spinRegistered = true;
+      } else if (spinD && input.isDown('KeyA')) {
+        trickSystem.landTrick('spin_540');
+        skater.playTrick('spin');
+        spinRegistered = true;
+      } else if (spinA) {
         trickSystem.landTrick('spin_180');
         skater.playTrick('spin');
         spinRegistered = true;
-      } else if (input.justPressed('KeyD')) {
+      } else if (spinD) {
         trickSystem.landTrick('spin_360');
         skater.playTrick('spin');
         spinRegistered = true;
@@ -456,6 +467,7 @@ engine = new Engine({
     if (skater.isGrounded) spinRegistered = false;
 
     // --- Grind detection ---
+    const wasGrinding = grindDetector.isGrinding;
     const grindResult = grindDetector.update(
       skater.position,
       input.isDown('KeyF'),
@@ -464,24 +476,32 @@ engine = new Engine({
     if (grindResult) {
       skater.body.position.set(grindResult.position.x, grindResult.position.y, grindResult.position.z);
       if (grindDetector.isGrinding) {
+        grindDistanceAccum += grindDetector.grindSpeed * delta;
         // Sparks while grinding
         sparks.emit(grindResult.position.x, grindResult.position.y, grindResult.position.z, 3);
         // Start grind sound
         if (!grindSound) grindSound = audio.playGrindLoop();
-        if (grindDetector.grindProgress < 0.05) {
+        // Register trick once at grind start
+        if (!wasGrinding) {
           trickSystem.landTrick('fifty_fifty');
           skater.playTrick('manual');
         }
       }
     } else {
+      // Grind just ended — report distance to challenges
+      if (wasGrinding && grindDistanceAccum > 0) {
+        challengeManager.onGrindDistance(grindDistanceAccum);
+        grindDistanceAccum = 0;
+      }
       // Stop grind sound when not grinding
       if (grindSound) { grindSound.stop(); grindSound = null; }
     }
 
-    // Notify systems of tricks landed
-    if (trickSystem.lastTrick) {
-      challengeManager.onTrickLanded(trickSystem.lastTrick);
-      stats.onTrickLanded(trickSystem.lastTrick);
+    // Notify systems of tricks landed — consume so it only fires once per landing
+    const justLanded = trickSystem.consumeLastTrick();
+    if (justLanded) {
+      challengeManager.onTrickLanded(justLanded);
+      stats.onTrickLanded(justLanded);
       // Start or extend combo timer
       if (!comboTimer.active) comboTimer.start();
       else comboTimer.extend(1.5);
@@ -502,11 +522,9 @@ engine = new Engine({
       hud.updateCombo(trickSystem.comboChain, trickSystem.comboMultiplier, trickSystem.comboScore);
     }
 
-    // --- Trick flash ---
-    if (trickSystem.lastTrick) {
-      const name = trickSystem.lastTrick;
-      const score = trickSystem.getBaseScore(name);
-      hud.flashTrick(name, score);
+    // --- Trick flash (use justLanded — already consumed above) ---
+    if (justLanded) {
+      hud.flashTrick(justLanded, trickSystem.getBaseScore(justLanded));
     }
 
     // --- Combo cash out (Enter) ---
