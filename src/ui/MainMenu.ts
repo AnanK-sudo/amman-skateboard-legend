@@ -23,7 +23,7 @@ export class MainMenu {
     `;
 
     const title = document.createElement('div');
-    title.textContent = 'ANAN SKATE';
+    title.textContent = 'AMMAN SKATEBOARD LEGEND';
     title.style.cssText = `
       font-family: Impact, 'Arial Narrow', sans-serif;
       font-size: 72px;

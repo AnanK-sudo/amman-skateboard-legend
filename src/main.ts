@@ -662,4 +662,4 @@ function debugLoop() {
 }
 debugLoop();
 
-console.log('ANAN SKATE — click to start, WASD to move, Space to ollie, Enter to cash out combo, Tab to switch zones, Escape to pause');
+console.log('AMMAN SKATEBOARD LEGEND — click to start, WASD to move, Space to ollie, Enter to cash out combo, Tab to switch zones, Escape to pause');
