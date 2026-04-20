@@ -38,51 +38,64 @@ import { ZoneTransition } from '@/effects/ZoneTransition';
 const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setClearColor(0x1a1a2e);
+renderer.setClearColor(0xc8b89a); // warm horizon fallback
 renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap; // soft shadow edges
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.2;
+renderer.toneMappingExposure = 1.0;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 
 // --- Scene & Lighting ---
 const scene = new THREE.Scene();
 
-// --- Sky gradient background ---
-scene.background = new THREE.Color(0x0a0a1a);
-scene.fog = new THREE.FogExp2(0x0a0a1a, 0.012); // distance fog
-
-// --- Lighting ---
-const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
-dirLight.position.set(10, 20, 10);
-dirLight.castShadow = true;
-dirLight.shadow.mapSize.width = 2048;
-dirLight.shadow.mapSize.height = 2048;
-dirLight.shadow.camera.near = 0.5;
-dirLight.shadow.camera.far = 100;
-dirLight.shadow.camera.left = -30;
-dirLight.shadow.camera.right = 30;
-dirLight.shadow.camera.top = 30;
-dirLight.shadow.camera.bottom = -30;
-scene.add(dirLight);
-scene.add(new THREE.AmbientLight(0x606080, 0.8));
-scene.add(new THREE.HemisphereLight(0x8888ff, 0x444422, 0.5));
-
-// --- Stars / atmosphere ---
-const starGeo = new THREE.BufferGeometry();
-const starPositions: number[] = [];
-for (let i = 0; i < 300; i++) {
-  const r = 80 + Math.random() * 120;
-  const theta = Math.random() * Math.PI * 2;
-  const phi = Math.random() * Math.PI * 0.5; // upper hemisphere
-  starPositions.push(
-    r * Math.sin(phi) * Math.cos(theta),
-    r * Math.cos(phi) + 10,
-    r * Math.sin(phi) * Math.sin(theta)
-  );
+// --- Sky dome — vertex-color gradient from warm haze at horizon to deep blue at zenith ---
+const skyGeo = new THREE.SphereGeometry(380, 32, 20);
+const skySphereColors = new Float32Array(skyGeo.attributes.position.count * 3);
+const skyPosAttr = skyGeo.attributes.position as THREE.BufferAttribute;
+for (let i = 0; i < skyPosAttr.count; i++) {
+  const y = skyPosAttr.getY(i);
+  const t = Math.max(0, Math.min(1, (y + 10) / 390)); // 0 = horizon, 1 = zenith
+  const ease = t * t; // quadratic — horizon band wider and warmer
+  // Horizon: warm sandy haze  →  Zenith: deep Amman afternoon blue
+  skySphereColors[i * 3]     = 0.82 + (0.28 - 0.82) * ease; // R
+  skySphereColors[i * 3 + 1] = 0.72 + (0.48 - 0.72) * ease; // G
+  skySphereColors[i * 3 + 2] = 0.55 + (0.72 - 0.55) * ease; // B
 }
-starGeo.setAttribute('position', new THREE.Float32BufferAttribute(starPositions, 3));
-const starMat = new THREE.PointsMaterial({ color: 0xffffff, size: 0.3, transparent: true, opacity: 0.6 });
-scene.add(new THREE.Points(starGeo, starMat));
+skyGeo.setAttribute('color', new THREE.BufferAttribute(skySphereColors, 3));
+const skyMesh = new THREE.Mesh(
+  skyGeo,
+  new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, depthWrite: false })
+);
+scene.add(skyMesh);
+
+// Warm atmospheric fog matching the horizon haze
+scene.fog = new THREE.FogExp2(0xd1bfa0, 0.008);
+
+// --- Lighting — 3-point warm afternoon setup ---
+// Key light: warm afternoon sun from the west
+const dirLight = new THREE.DirectionalLight(0xfff0d0, 2.2);
+dirLight.position.set(60, 80, 30);
+dirLight.castShadow = true;
+dirLight.shadow.mapSize.width = 4096;
+dirLight.shadow.mapSize.height = 4096;
+dirLight.shadow.camera.near = 1;
+dirLight.shadow.camera.far = 300;
+dirLight.shadow.camera.left = -60;
+dirLight.shadow.camera.right = 60;
+dirLight.shadow.camera.top = 60;
+dirLight.shadow.camera.bottom = -60;
+dirLight.shadow.bias = -0.0003;
+scene.add(dirLight);
+
+// Fill light: cool sky bounce from opposite side
+scene.add(new THREE.DirectionalLight(0xc0d8f0, 0.5).position.set(-30, 20, -20) && new THREE.DirectionalLight(0xc0d8f0, 0.5));
+const fillLight = new THREE.DirectionalLight(0xc0d8f0, 0.5);
+fillLight.position.set(-30, 20, -20);
+scene.add(fillLight);
+
+// Hemisphere: warm ground bounce + sky ambient
+scene.add(new THREE.HemisphereLight(0x9bbde8, 0xc4a86c, 0.7));
+scene.add(new THREE.AmbientLight(0xffe8c8, 0.4));
 
 // --- Physics ---
 const physics = new PhysicsWorld();

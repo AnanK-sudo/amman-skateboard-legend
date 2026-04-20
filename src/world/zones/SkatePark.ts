@@ -5,6 +5,7 @@ import { Rail } from '../objects/Rail';
 import { Ramp } from '../objects/Ramp';
 import { Ledge } from '../objects/Ledge';
 import { Platform } from '../objects/Platform';
+import { createConcreteMaterial } from '@/shaders/GraffitiMaterial';
 
 export class SkatePark implements Zone {
   readonly config: ZoneConfig = {
@@ -96,23 +97,13 @@ export class SkatePark implements Zone {
 
   load(scene: THREE.Scene, world: CANNON.World): void {
     // === GROUND ===
-    // Main ground — large flat area
-    const groundGeo = new THREE.PlaneGeometry(80, 80, 20, 20);
-    const groundMat = new THREE.MeshStandardMaterial({
-      color: 0x2d2d4e,
-      roughness: 0.9,
-    });
-    const ground = new THREE.Mesh(groundGeo, groundMat);
+    const ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(80, 80),
+      createConcreteMaterial(0xa8a090)
+    );
     ground.rotation.x = -Math.PI / 2;
     ground.receiveShadow = true;
     this.addMesh(scene, ground);
-
-    // Grid overlay for concrete texture feel
-    const grid = new THREE.GridHelper(80, 40, 0x222244, 0x222244);
-    (grid.material as THREE.Material).transparent = true;
-    (grid.material as THREE.Material).opacity = 0.15;
-    grid.position.y = 0.01;
-    this.addMesh(scene, grid);
 
     // Ground physics (flat infinite plane)
     const groundBody = new CANNON.Body({

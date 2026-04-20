@@ -5,6 +5,7 @@ import { Rail } from '../objects/Rail';
 import { Stairs } from '../objects/Stairs';
 import { Ledge } from '../objects/Ledge';
 import { Platform } from '../objects/Platform';
+import { createConcreteMaterial } from '@/shaders/GraffitiMaterial';
 
 export class StreetSpot implements Zone {
   readonly config: ZoneConfig = {
@@ -19,7 +20,7 @@ export class StreetSpot implements Zone {
   load(scene: THREE.Scene, world: CANNON.World): void {
     const ground = new THREE.Mesh(
       new THREE.PlaneGeometry(80, 80),
-      new THREE.MeshStandardMaterial({ color: 0x3a3a4a })
+      createConcreteMaterial(0x808080)
     );
     ground.rotation.x = -Math.PI / 2;
     ground.receiveShadow = true;
