@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
-import { createGraffitiMaterial, createNeonMaterial } from '@/shaders/GraffitiMaterial';
+import { createStoneMaterial, createNeonMaterial } from '@/shaders/GraffitiMaterial';
 
 export interface LedgeConfig {
   position: THREE.Vector3;
@@ -23,7 +23,7 @@ export class Ledge {
     this.mesh = new THREE.Group();
 
     const geo = new THREE.BoxGeometry(length, height, width);
-    const mat = createGraffitiMaterial(0x5a5a7a);
+    const mat = createStoneMaterial(0xc8b89a);
     const ledgeMesh = new THREE.Mesh(geo, mat);
     ledgeMesh.castShadow = true;
     ledgeMesh.receiveShadow = true;

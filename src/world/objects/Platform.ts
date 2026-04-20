@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
-import { createGraffitiMaterial } from '@/shaders/GraffitiMaterial';
+import { createConcreteMaterial } from '@/shaders/GraffitiMaterial';
 
 export interface PlatformConfig {
   position: THREE.Vector3;
@@ -18,7 +18,7 @@ export class Platform {
 
     // --- Three.js box mesh ---
     const geo = new THREE.BoxGeometry(width, height, depth);
-    const mat = createGraffitiMaterial(0x3a3a5c);
+    const mat = createConcreteMaterial(0xb0a898);
     this.mesh = new THREE.Mesh(geo, mat);
     // Center mesh vertically so bottom is at position.y
     this.mesh.position.set(position.x, position.y + height / 2, position.z);

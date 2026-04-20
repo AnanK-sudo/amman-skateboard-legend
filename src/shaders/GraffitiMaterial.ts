@@ -58,7 +58,7 @@ export function createStoneMaterial(baseColor: number, roughness = 0.88): THREE.
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
   tex.repeat.set(3, 3);
 
-  return new THREE.MeshStandardMaterial({ map: tex, roughness, color: baseColor });
+  return new THREE.MeshStandardMaterial({ map: tex, roughness });
 }
 
 // Concrete (asphalt / skate surface) — darker, smoother grain
@@ -90,5 +90,5 @@ export function createConcreteMaterial(baseColor: number): THREE.MeshStandardMat
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
   tex.repeat.set(6, 6);
 
-  return new THREE.MeshStandardMaterial({ map: tex, roughness: 0.92, color: baseColor });
+  return new THREE.MeshStandardMaterial({ map: tex, roughness: 0.92 });
 }

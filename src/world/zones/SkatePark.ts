@@ -5,7 +5,7 @@ import { Rail } from '../objects/Rail';
 import { Ramp } from '../objects/Ramp';
 import { Ledge } from '../objects/Ledge';
 import { Platform } from '../objects/Platform';
-import { createConcreteMaterial } from '@/shaders/GraffitiMaterial';
+import { createConcreteMaterial, createStoneMaterial } from '@/shaders/GraffitiMaterial';
 
 export class SkatePark implements Zone {
   readonly config: ZoneConfig = {
@@ -31,7 +31,7 @@ export class SkatePark implements Zone {
     scene: THREE.Scene, world: CANNON.World,
     x: number, z: number,
     width: number, depth: number, height: number,
-    color = 0x2a2a48
+    color = 0xb0a898
   ) {
     // Visual — smooth hill using a box with tapered top
     const geo = new THREE.BoxGeometry(width, height, depth);
@@ -48,7 +48,7 @@ export class SkatePark implements Zone {
     positions.needsUpdate = true;
     geo.computeVertexNormals();
 
-    const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color }));
+    const mesh = new THREE.Mesh(geo, createConcreteMaterial(color));
     mesh.position.set(x, height / 2, z);
     this.addMesh(scene, mesh);
 
@@ -65,7 +65,7 @@ export class SkatePark implements Zone {
     scene: THREE.Scene, world: CANNON.World,
     x: number, z: number,
     width: number, height: number, depth: number,
-    rotation = 0, color = 0x2d2d50
+    rotation = 0, color = 0xb8aa88
   ) {
     // A sloped bank/transition — wedge shape
     const shape = new THREE.Shape();
@@ -77,7 +77,7 @@ export class SkatePark implements Zone {
     const geo = new THREE.ExtrudeGeometry(shape, { depth: width, bevelEnabled: false });
     geo.translate(-depth / 2, 0, -width / 2);
 
-    const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color }));
+    const mesh = new THREE.Mesh(geo, createConcreteMaterial(color));
     mesh.position.set(x, 0, z);
     mesh.rotation.y = rotation;
     this.addMesh(scene, mesh);
@@ -124,7 +124,7 @@ export class SkatePark implements Zone {
     this.bodies.push(plat.body);
 
     // Bank leading up to the platform (south face)
-    this.createBank(scene, world, 0, -12.5, 12, platHeight, 3, 0, 0x33335a);
+    this.createBank(scene, world, 0, -12.5, 12, platHeight, 3, 0);
 
     // Rails on top of the elevated platform
     const topRail = new Rail({
@@ -152,7 +152,7 @@ export class SkatePark implements Zone {
     // Bowl floor (lowered)
     const bowlFloor = new THREE.Mesh(
       new THREE.CircleGeometry(bowlRadius - 0.5, bowlSegments),
-      new THREE.MeshStandardMaterial({ color: 0x252545 })
+      createConcreteMaterial(0x9a9080)
     );
     bowlFloor.rotation.x = -Math.PI / 2;
     bowlFloor.position.set(bowlCenter.x, -bowlDepth + 0.01, bowlCenter.z);
@@ -178,7 +178,7 @@ export class SkatePark implements Zone {
 
       const wallMesh = new THREE.Mesh(
         new THREE.BoxGeometry(wallWidth, bowlDepth + 0.5, 0.4),
-        new THREE.MeshStandardMaterial({ color: 0x2a2a4c })
+        createConcreteMaterial(0xa09888)
       );
       wallMesh.position.set(wallX, -bowlDepth / 2 + 0.25, wallZ);
       wallMesh.rotation.y = -midAngle + Math.PI / 2;
@@ -211,9 +211,9 @@ export class SkatePark implements Zone {
     this.bodies.push(qp2.body);
 
     // === HILLS (scattered) ===
-    this.createHill(scene, world, 10, 10, 4, 4, 1.2, 0x2e2e52);
-    this.createHill(scene, world, -8, 12, 5, 3, 0.8, 0x302e50);
-    this.createHill(scene, world, 12, -8, 3, 5, 1.0, 0x2c2c4e);
+    this.createHill(scene, world, 10, 10, 4, 4, 1.2);
+    this.createHill(scene, world, -8, 12, 5, 3, 0.8);
+    this.createHill(scene, world, 12, -8, 3, 5, 1.0);
 
     // === CENTER AREA — flat with features ===
     // Fun box
@@ -225,8 +225,8 @@ export class SkatePark implements Zone {
     this.bodies.push(funbox.body);
 
     // Bank up to fun box
-    this.createBank(scene, world, 0, 2, 4, 0.7, 1.5, 0, 0x33335a);
-    this.createBank(scene, world, 0, -2, 4, 0.7, 1.5, Math.PI, 0x33335a);
+    this.createBank(scene, world, 0, 2, 4, 0.7, 1.5, 0);
+    this.createBank(scene, world, 0, -2, 4, 0.7, 1.5, Math.PI);
 
     // Center rail
     const rail1 = new Rail({
@@ -279,8 +279,8 @@ export class SkatePark implements Zone {
     this.bodies.push(launch.body);
 
     // Small bank for flow
-    this.createBank(scene, world, -12, 8, 6, 1.0, 2.5, Math.PI / 2, 0x2e2e50);
-    this.createBank(scene, world, 12, 8, 6, 1.0, 2.5, -Math.PI / 2, 0x2e2e50);
+    this.createBank(scene, world, -12, 8, 6, 1.0, 2.5, Math.PI / 2);
+    this.createBank(scene, world, 12, 8, 6, 1.0, 2.5, -Math.PI / 2);
 
     // === PYRAMID ===
     const pyramid = new Platform({
@@ -290,14 +290,14 @@ export class SkatePark implements Zone {
     this.addMesh(scene, pyramid.mesh);
     this.bodies.push(pyramid.body);
     // Banks on all 4 sides of pyramid
-    this.createBank(scene, world, -10, -5.5, 4, 1.0, 2, 0, 0x33335a);
-    this.createBank(scene, world, -10, -10.5, 4, 1.0, 2, Math.PI, 0x33335a);
-    this.createBank(scene, world, -7.5, -8, 4, 1.0, 2, -Math.PI / 2, 0x33335a);
-    this.createBank(scene, world, -12.5, -8, 4, 1.0, 2, Math.PI / 2, 0x33335a);
+    this.createBank(scene, world, -10, -5.5, 4, 1.0, 2, 0);
+    this.createBank(scene, world, -10, -10.5, 4, 1.0, 2, Math.PI);
+    this.createBank(scene, world, -7.5, -8, 4, 1.0, 2, -Math.PI / 2);
+    this.createBank(scene, world, -12.5, -8, 4, 1.0, 2, Math.PI / 2);
 
     // === AMBIENT — ground markings / color variation ===
-    // Colored ground patches for visual interest
-    const patchColors = [0x252548, 0x302a50, 0x28284a, 0x2a2a4c];
+    // Faded paint markings for visual interest
+    const patchColors = [0x9a9080, 0xa8988a, 0x908878, 0x9c9282];
     for (let i = 0; i < 8; i++) {
       const px = (Math.random() - 0.5) * 50;
       const pz = (Math.random() - 0.5) * 50;

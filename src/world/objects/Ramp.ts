@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
-import { createGraffitiMaterial } from '@/shaders/GraffitiMaterial';
+import { createConcreteMaterial } from '@/shaders/GraffitiMaterial';
 
 export interface RampConfig {
   position: THREE.Vector3;
@@ -35,7 +35,7 @@ export class Ramp {
     // Center the geometry so pivot is at bottom-center
     geo.translate(-depth / 2, 0, -width / 2);
 
-    const mat = createGraffitiMaterial(0x3a3a5c);
+    const mat = createConcreteMaterial(0xb8aa88);
     this.mesh = new THREE.Mesh(geo, mat);
     this.mesh.position.copy(position);
     this.mesh.rotation.y = rotation;
