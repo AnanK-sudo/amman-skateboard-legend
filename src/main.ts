@@ -44,7 +44,7 @@ renderer.setClearColor(0xc8b89a); // warm horizon fallback
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.25;
+renderer.toneMappingExposure = 0.9;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 
 // --- Scene ---
@@ -54,55 +54,49 @@ const scene = new THREE.Scene();
 const sky = new Sky();
 sky.scale.setScalar(10000);
 const skyUniforms = (sky.material as THREE.ShaderMaterial).uniforms;
-skyUniforms['turbidity'].value = 2.5;        // clear morning air
-skyUniforms['rayleigh'].value = 1.8;          // vivid blue sky
-skyUniforms['mieCoefficient'].value = 0.015; // morning haze (less than afternoon)
-skyUniforms['mieDirectionalG'].value = 0.9;
+skyUniforms['turbidity'].value = 5;          // moderate haze — prevents white blowout
+skyUniforms['rayleigh'].value = 1.0;          // balanced blue sky
+skyUniforms['mieCoefficient'].value = 0.03;
+skyUniforms['mieDirectionalG'].value = 0.85;
 
-// Sun: Amman morning ~20° elevation (golden hour) from ENE
+// Sun: Amman morning ~38° elevation (bright morning, not dawn)
 const sun = new THREE.Vector3();
-const sunPhi   = THREE.MathUtils.degToRad(90 - 22); // low on horizon
-const sunTheta = THREE.MathUtils.degToRad(70);       // ENE
+const sunPhi   = THREE.MathUtils.degToRad(90 - 38);
+const sunTheta = THREE.MathUtils.degToRad(150); // ESE
 sun.setFromSphericalCoords(1, sunPhi, sunTheta);
 skyUniforms['sunPosition'].value.copy(sun);
 
-// Bake sky into PMREM env map so PBR metals/glass get sky reflections
-const pmrem = new THREE.PMREMGenerator(renderer);
-pmrem.compileEquirectangularShader();
-const _skyEnvScene = new THREE.Scene();
-_skyEnvScene.add(sky);
-scene.environment = pmrem.fromScene(_skyEnvScene, 0.04, 1, 20000).texture;
-pmrem.dispose();
-scene.add(sky); // return sky to main scene
+// Add sky directly — no PMREMGenerator (was causing env map overexposure)
+scene.add(sky);
 
-// Morning haze — cool blue-gold, less dense so Amman hillsides stay readable
-scene.fog = new THREE.FogExp2(0xb8c8d8, 0.003);
+// Clear morning haze
+scene.fog = new THREE.FogExp2(0xc0cedc, 0.004);
 
-// --- Lighting — sun-matched 3-point, physically plausible ---
-// Key: warm morning golden-hour sun (low, intense orange-gold)
-const dirLight = new THREE.DirectionalLight(0xffc860, 5.0);
-dirLight.position.copy(sun).multiplyScalar(300);
+// --- Lighting — balanced, no overexposure ---
+// Key: warm morning sun
+const dirLight = new THREE.DirectionalLight(0xfff5d0, 1.8);
+dirLight.position.copy(sun).multiplyScalar(200);
 dirLight.castShadow = true;
-dirLight.shadow.mapSize.width = 4096;
-dirLight.shadow.mapSize.height = 4096;
+dirLight.shadow.mapSize.width = 2048;
+dirLight.shadow.mapSize.height = 2048;
 dirLight.shadow.camera.near = 1;
-dirLight.shadow.camera.far = 400;
-dirLight.shadow.camera.left  = -80;
-dirLight.shadow.camera.right  = 80;
-dirLight.shadow.camera.top    = 80;
-dirLight.shadow.camera.bottom = -80;
+dirLight.shadow.camera.far = 300;
+dirLight.shadow.camera.left  = -60;
+dirLight.shadow.camera.right  = 60;
+dirLight.shadow.camera.top    = 60;
+dirLight.shadow.camera.bottom = -60;
 dirLight.shadow.bias = -0.0003;
 scene.add(dirLight);
 
-// Fill: soft blue morning sky bounce from west
-const fillLight = new THREE.DirectionalLight(0xb0d0ff, 1.0);
-fillLight.position.set(-sun.x * 80, 40, -sun.z * 80);
+// Fill: cool sky bounce from opposite direction
+const fillLight = new THREE.DirectionalLight(0xc0d8ff, 0.4);
+fillLight.position.set(-sun.x * 60, 30, -sun.z * 60);
 scene.add(fillLight);
 
-// Hemisphere: morning sky dome (pale blue) + warm stone ground bounce
-scene.add(new THREE.HemisphereLight(0xb4d4ff, 0xe0c888, 1.1));
-// Warm golden ambient — morning light wraps around everything
-scene.add(new THREE.AmbientLight(0xffe8b0, 0.7));
+// Hemisphere: sky + ground bounce, kept moderate
+scene.add(new THREE.HemisphereLight(0x9ec8f8, 0xd4b870, 0.5));
+// Soft ambient so shadows have color, not black
+scene.add(new THREE.AmbientLight(0xfff0d0, 0.3));
 
 // --- Physics ---
 const physics = new PhysicsWorld();
@@ -217,9 +211,9 @@ const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, followCam.camera));
 const bloomPass = new UnrealBloomPass(
   new THREE.Vector2(window.innerWidth, window.innerHeight),
-  0.7,   // strength — stronger glow on neon rails + sun highlights
-  0.6,   // radius
-  0.80   // threshold — neon rails, sparks, sun disc all bloom
+  0.35,  // strength — only bright neon/sparks bloom, not the whole sky
+  0.4,   // radius
+  0.88   // threshold — high so only truly bright things (rails, sparks) bloom
 );
 composer.addPass(bloomPass);
 const cinematicPass = createCinematicPass();
