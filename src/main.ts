@@ -33,7 +33,6 @@ import { BoardTrail } from '@/effects/BoardTrail';
 import { TrickListOverlay } from '@/ui/TrickListOverlay';
 import { Minimap } from '@/ui/Minimap';
 import { ZoneTransition } from '@/effects/ZoneTransition';
-import { Sky } from 'three/addons/objects/Sky.js';
 import { createCinematicPass } from '@/effects/CinematicPass';
 
 // --- Renderer ---
@@ -50,32 +49,38 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 // --- Scene ---
 const scene = new THREE.Scene();
 
-// --- Atmospheric sky (Three.js Sky shader — real Rayleigh/Mie scattering) ---
-const sky = new Sky();
-sky.scale.setScalar(10000);
-const skyUniforms = (sky.material as THREE.ShaderMaterial).uniforms;
-skyUniforms['turbidity'].value = 5;          // moderate haze — prevents white blowout
-skyUniforms['rayleigh'].value = 1.0;          // balanced blue sky
-skyUniforms['mieCoefficient'].value = 0.03;
-skyUniforms['mieDirectionalG'].value = 0.85;
+// --- Sky dome — vertex-color gradient, MeshBasicMaterial bypasses tonemapping ---
+// Gives full color control: deep blue zenith → warm sandy horizon
+const skyGeo = new THREE.SphereGeometry(500, 32, 24);
+const skyColors = new Float32Array(skyGeo.attributes.position.count * 3);
+const skyPos = skyGeo.attributes.position as THREE.BufferAttribute;
+for (let i = 0; i < skyPos.count; i++) {
+  const y = skyPos.getY(i);
+  const t = Math.max(0, Math.min(1, (y + 30) / 530)); // 0=horizon, 1=zenith
+  const e = t * t;
+  // Horizon: warm sandy haze  →  Zenith: deep Amman blue
+  skyColors[i * 3]     = (0.78 - 0.52 * e); // R: 0.78→0.26
+  skyColors[i * 3 + 1] = (0.70 - 0.26 * e); // G: 0.70→0.44
+  skyColors[i * 3 + 2] = (0.55 + 0.25 * e); // B: 0.55→0.80
+}
+skyGeo.setAttribute('color', new THREE.BufferAttribute(skyColors, 3));
+const skyMesh = new THREE.Mesh(skyGeo, new THREE.MeshBasicMaterial({
+  vertexColors: true, side: THREE.BackSide, depthWrite: false,
+}));
+scene.add(skyMesh);
 
-// Sun: Amman morning ~38° elevation (bright morning, not dawn)
-const sun = new THREE.Vector3();
-const sunPhi   = THREE.MathUtils.degToRad(90 - 38);
-const sunTheta = THREE.MathUtils.degToRad(150); // ESE
-sun.setFromSphericalCoords(1, sunPhi, sunTheta);
-skyUniforms['sunPosition'].value.copy(sun);
+// Match renderer clear color to horizon haze
+renderer.setClearColor(0xc7b28c, 1);
 
-// Add sky directly — no PMREMGenerator (was causing env map overexposure)
-scene.add(sky);
+// Warm sandy Amman haze fog
+scene.fog = new THREE.FogExp2(0xc8b898, 0.005);
 
-// Clear morning haze
-scene.fog = new THREE.FogExp2(0xc0cedc, 0.004);
+// Sun direction — used for dirLight position only
+const sun = new THREE.Vector3(60, 80, 30).normalize();
 
-// --- Lighting — balanced, no overexposure ---
-// Key: warm morning sun
+// --- Lighting — calibrated, no overexposure ---
 const dirLight = new THREE.DirectionalLight(0xfff5d0, 1.8);
-dirLight.position.copy(sun).multiplyScalar(200);
+dirLight.position.set(60, 80, 30);
 dirLight.castShadow = true;
 dirLight.shadow.mapSize.width = 2048;
 dirLight.shadow.mapSize.height = 2048;
@@ -88,14 +93,13 @@ dirLight.shadow.camera.bottom = -60;
 dirLight.shadow.bias = -0.0003;
 scene.add(dirLight);
 
-// Fill: cool sky bounce from opposite direction
+// Fill: cool sky bounce
 const fillLight = new THREE.DirectionalLight(0xc0d8ff, 0.4);
-fillLight.position.set(-sun.x * 60, 30, -sun.z * 60);
+fillLight.position.set(-30, 20, -20);
 scene.add(fillLight);
 
-// Hemisphere: sky + ground bounce, kept moderate
+// Hemisphere + ambient — kept low so nothing blows out
 scene.add(new THREE.HemisphereLight(0x9ec8f8, 0xd4b870, 0.5));
-// Soft ambient so shadows have color, not black
 scene.add(new THREE.AmbientLight(0xfff0d0, 0.3));
 
 // --- Physics ---
