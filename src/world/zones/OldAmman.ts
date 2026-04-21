@@ -6,6 +6,7 @@ import { Ramp } from '../objects/Ramp';
 import { Ledge } from '../objects/Ledge';
 import { Platform } from '../objects/Platform';
 import { createStoneMaterial, createConcreteMaterial } from '@/shaders/GraffitiMaterial';
+import { loadBuilding } from '../BuildingLoader';
 
 // 7 Hills Skate Park, Amman, Jordan — daytime, limestone architecture
 export class OldAmman implements Zone {
@@ -17,6 +18,7 @@ export class OldAmman implements Zone {
 
   private objects: THREE.Object3D[] = [];
   private bodies: CANNON.Body[] = [];
+  private modelCleanups: (() => void)[] = [];
 
   private addMesh(scene: THREE.Scene, mesh: THREE.Object3D): void {
     scene.add(mesh);
@@ -529,6 +531,33 @@ export class OldAmman implements Zone {
     this.addBox(scene, world, -25, 0, -16, 0.6, 2.0, 16, wallMat);
     this.addBox(scene, world, 25, 0, -16, 0.6, 2.0, 16, wallMat);
 
+    // =========================================================
+    // REAL BUILDING MODELS — drop .glb files in /public/models/
+    // =========================================================
+    // Each entry: modelPath, position, scale, rotationY (radians)
+    // If the file doesn't exist the loader silently skips it.
+    const buildingPlacements: [string, number, number, number, number, number][] = [
+      // [modelPath,              x,    z,   scale, rotY,        ]
+      ['/models/building_a.glb', -20, -46,   1.0,  0            ],
+      ['/models/building_a.glb',  -8, -44,   1.2,  Math.PI / 4  ],
+      ['/models/building_b.glb',   4, -47,   0.9,  0            ],
+      ['/models/building_b.glb',  16, -45,   1.1, -Math.PI / 6  ],
+      ['/models/building_a.glb', -22,  44,   1.0,  Math.PI      ],
+      ['/models/building_b.glb',   2,  43,   1.3,  Math.PI      ],
+      ['/models/building_a.glb', -46, -20,   1.0,  Math.PI / 2  ],
+      ['/models/building_b.glb', -48,   4,   1.1,  Math.PI / 2  ],
+    ];
+
+    for (const [path, x, z, scale, rotY] of buildingPlacements) {
+      const cleanup = loadBuilding(scene, world, {
+        modelPath: path,
+        position: new THREE.Vector3(x, 0, z),
+        scale,
+        rotationY: rotY,
+      });
+      this.modelCleanups.push(cleanup);
+    }
+
     // Street lamps along the wall — with warm point lights casting pools on ground
     const lampMat = new THREE.MeshStandardMaterial({ color: 0x888878, roughness: 0.3, metalness: 0.7 });
     const lampHeadMat = new THREE.MeshStandardMaterial({
@@ -559,7 +588,9 @@ export class OldAmman implements Zone {
   unload(scene: THREE.Scene, world: CANNON.World): void {
     for (const obj of this.objects) scene.remove(obj);
     for (const body of this.bodies) world.removeBody(body);
+    for (const cleanup of this.modelCleanups) cleanup();
     this.objects = [];
     this.bodies = [];
+    this.modelCleanups = [];
   }
 }
