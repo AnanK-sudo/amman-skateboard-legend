@@ -1,8 +1,10 @@
 import * as THREE from 'three';
-import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
-import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
-import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
-import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import {
+  EffectComposer, RenderPass, EffectPass,
+  BloomEffect, DepthOfFieldEffect, VignetteEffect, ChromaticAberrationEffect,
+  SMAAEffect, ToneMappingEffect, ToneMappingMode,
+} from 'postprocessing';
+import { HalfFloatType } from 'three';
 import { Engine } from '@/core/Engine';
 import { InputManager } from '@/core/InputManager';
 import { PhysicsWorld } from '@/core/PhysicsWorld';
@@ -30,55 +32,52 @@ import { Customization } from '@/player/Customization';
 import { CustomizeMenu } from '@/ui/CustomizeMenu';
 import { StatsTracker } from '@/progression/StatsTracker';
 import { BoardTrail } from '@/effects/BoardTrail';
+import { SkaterModel } from '@/player/SkaterModel';
 import { TrickListOverlay } from '@/ui/TrickListOverlay';
 import { Minimap } from '@/ui/Minimap';
 import { ZoneTransition } from '@/effects/ZoneTransition';
-import { createCinematicPass } from '@/effects/CinematicPass';
 
 // --- Renderer ---
 const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setClearColor(0xc8b89a); // warm horizon fallback
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 0.9;
+renderer.toneMapping = THREE.NoToneMapping;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 
 // --- Scene ---
 const scene = new THREE.Scene();
 
-// --- Sky dome — vertex-color gradient, MeshBasicMaterial bypasses tonemapping ---
-// Gives full color control: deep blue zenith → warm sandy horizon
-const skyGeo = new THREE.SphereGeometry(500, 32, 24);
-const skyColors = new Float32Array(skyGeo.attributes.position.count * 3);
-const skyPos = skyGeo.attributes.position as THREE.BufferAttribute;
-for (let i = 0; i < skyPos.count; i++) {
-  const y = skyPos.getY(i);
-  const t = Math.max(0, Math.min(1, (y + 30) / 530)); // 0=horizon, 1=zenith
-  const e = t * t;
-  // Horizon: warm sandy haze  →  Zenith: deep Amman blue
-  skyColors[i * 3]     = (0.78 - 0.52 * e); // R: 0.78→0.26
-  skyColors[i * 3 + 1] = (0.70 - 0.26 * e); // G: 0.70→0.44
-  skyColors[i * 3 + 2] = (0.55 + 0.25 * e); // B: 0.55→0.80
+// Fog color matches sky horizon -- warm golden Amman dust haze
+scene.fog = new THREE.FogExp2(0xd4a060, 0.003);
+
+// Vertex-colored sky dome -- gradient from deep Jordan blue (zenith) to warm amber (horizon)
+// MeshBasicMaterial, BackSide, no fog so the horizon line stays clean
+{
+  const skyGeo = new THREE.SphereGeometry(450, 32, 16);
+  const skyPos = skyGeo.attributes.position;
+  const skyColors: number[] = [];
+  const zenith  = new THREE.Color(0x1a5fa8); // deep clear Jordanian blue
+  const horizon = new THREE.Color(0xe8a850); // warm golden Amman amber
+  const ground  = new THREE.Color(0x8a7060); // warm earth below horizon
+  for (let i = 0; i < skyPos.count; i++) {
+    const t = skyPos.getY(i) / 450; // -1 (nadir) to +1 (zenith)
+    const col = t >= 0
+      ? zenith.clone().lerp(horizon, 1 - t)
+      : horizon.clone().lerp(ground, -t);
+    skyColors.push(col.r, col.g, col.b);
+  }
+  skyGeo.setAttribute('color', new THREE.Float32BufferAttribute(skyColors, 3));
+  scene.add(new THREE.Mesh(
+    skyGeo,
+    new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false }),
+  ));
 }
-skyGeo.setAttribute('color', new THREE.BufferAttribute(skyColors, 3));
-const skyMesh = new THREE.Mesh(skyGeo, new THREE.MeshBasicMaterial({
-  vertexColors: true, side: THREE.BackSide, depthWrite: false,
-}));
-scene.add(skyMesh);
 
-// Match renderer clear color to horizon haze
-renderer.setClearColor(0xc7b28c, 1);
-
-// Warm sandy Amman haze fog
-scene.fog = new THREE.FogExp2(0xc8b898, 0.005);
-
-// Sun direction — used for dirLight position only
-const sun = new THREE.Vector3(60, 80, 30).normalize();
-
-// --- Lighting — calibrated, no overexposure ---
+// --- Lighting ---
+// Toon shading reads only from scene lights -- no env map contribution.
+// Hemisphere + ambient are bumped to compensate for removed HDRI.
 const dirLight = new THREE.DirectionalLight(0xfff5d0, 1.8);
 dirLight.position.set(60, 80, 30);
 dirLight.castShadow = true;
@@ -93,13 +92,13 @@ dirLight.shadow.camera.bottom = -60;
 dirLight.shadow.bias = -0.0003;
 scene.add(dirLight);
 
-// Fill: cool sky bounce
-const fillLight = new THREE.DirectionalLight(0xc0d8ff, 0.4);
+// Fill: cool sky bounce from opposite side
+const fillLight = new THREE.DirectionalLight(0xc0d8ff, 0.3);
 fillLight.position.set(-30, 20, -20);
 scene.add(fillLight);
 
-// Hemisphere + ambient — kept low so nothing blows out
-scene.add(new THREE.HemisphereLight(0x9ec8f8, 0xd4b870, 0.5));
+// Sky/ground hemisphere: sky color = zenith blue, ground = warm sandy earth
+scene.add(new THREE.HemisphereLight(0x5a9bcc, 0xc4a870, 0.55));
 scene.add(new THREE.AmbientLight(0xfff0d0, 0.3));
 
 // --- Physics ---
@@ -119,6 +118,9 @@ let currentZoneIndex = 0;
 // --- Skater --- (must be after zone load so grindables can be registered after)
 const skater = new Skater(physics.world);
 scene.add(skater.mesh);
+
+// --- Animated skater model (FBX, loads async) ---
+const skaterModel = new SkaterModel(scene, skater.mesh);
 
 // --- Grind Detector ---
 const grindDetector = new GrindDetector();
@@ -210,19 +212,44 @@ function emitDust(x: number, y: number, z: number) {
 // --- Camera ---
 const followCam = new FollowCamera(window.innerWidth / window.innerHeight);
 
-// --- Post-processing (bloom) ---
-const composer = new EffectComposer(renderer);
+// --- Post-processing (pmndrs/postprocessing) ---
+// HalfFloatType buffers required for HDR bloom to work correctly.
+// renderer.toneMapping = NoToneMapping -- ToneMappingEffect handles it here.
+const composer = new EffectComposer(renderer, { frameBufferType: HalfFloatType, multisampling: 0 });
 composer.addPass(new RenderPass(scene, followCam.camera));
-const bloomPass = new UnrealBloomPass(
-  new THREE.Vector2(window.innerWidth, window.innerHeight),
-  0.35,  // strength — only bright neon/sparks bloom, not the whole sky
-  0.4,   // radius
-  0.88   // threshold — high so only truly bright things (rails, sparks) bloom
-);
-composer.addPass(bloomPass);
-const cinematicPass = createCinematicPass();
-composer.addPass(cinematicPass);
-composer.addPass(new OutputPass());
+
+const bloomEffect = new BloomEffect({
+  luminanceThreshold: 0.82,   // only truly bright emissive (rails, sparks) bloom
+  luminanceSmoothing: 0.05,
+  intensity: 1.4,
+  mipmapBlur: true,
+  radius: 0.8,
+  levels: 8,
+});
+
+const dofEffect = new DepthOfFieldEffect(followCam.camera, {
+  worldFocusDistance: 8,
+  worldFocusRange: 12,
+  bokehScale: 2.0,
+  focalLength: 0.025,
+  height: 480,
+});
+
+const chromaticAberrationEffect = new ChromaticAberrationEffect();
+
+const vignetteEffect = new VignetteEffect({ darkness: 0.55, offset: 0.3 });
+
+const smaaEffect = new SMAAEffect();
+
+const toneMappingEffect = new ToneMappingEffect({ mode: ToneMappingMode.ACES_FILMIC });
+
+composer.addPass(new EffectPass(followCam.camera,
+  bloomEffect, dofEffect, toneMappingEffect, chromaticAberrationEffect, vignetteEffect,
+));
+composer.addPass(new EffectPass(followCam.camera, smaaEffect));
+
+// DOF auto-tracks the skater -- reads this Vector3 reference each frame
+dofEffect.target = skater.mesh.position;
 
 // --- Input ---
 const input = new InputManager();
@@ -323,7 +350,9 @@ const mainMenu = new MainMenu({
 const customizeMenu = new CustomizeMenu(customization, () => {
   // Apply style to skater — safely traverse to find groups
   try {
-    const inner = skater.mesh.children[0] as THREE.Group;
+    // mesh → stanceGroup (children[0]) → innerGroup (children[0])
+    const stance = skater.mesh.children[0] as THREE.Group;
+    const inner  = stance?.children[0] as THREE.Group;
     if (!inner) return;
     // boardGroup is the last Group child of innerGroup
     let board: THREE.Group | null = null;
@@ -401,6 +430,18 @@ engine = new Engine({
     // --- Camera & physics ---
     followCam.handleMouseInput(input.mouseDelta.x, input.mouseDelta.y);
     skater.update(delta, getSkaterInput());
+    skaterModel.update(delta, {
+      position:   skater.position,
+      yaw:        skater.yaw,
+      speed:      skater.speed,
+      maxSpeed:   skater.maxSpeed,
+      isGrounded: skater.isGrounded,
+      isAirborne: skater.isAirborne,
+      isPushing:  skater.pushing,
+      isBailing:  skater.isBailing,
+      lean:       skater.lean,
+      shock:      skater.shock,
+    });
     physics.step(delta);
     followCam.update(delta, skater.position, skater.speed, skater.maxSpeed, skater.yaw);
 
@@ -607,8 +648,9 @@ engine = new Engine({
 
     // --- Speed HUD + cinematic speed effects ---
     hud.updateSpeed(skater.speed / skater.maxSpeed);
-    // Chromatic aberration scales with speed (kicks in above 50%)
-    cinematicPass.uniforms['uSpeed'].value = Math.max(0, (skater.speed / skater.maxSpeed - 0.4) / 0.6);
+    // Chromatic aberration scales with speed (kicks in above 40% max speed)
+    const _caStrength = Math.max(0, (skater.speed / skater.maxSpeed - 0.4) / 0.6) * 0.003;
+    chromaticAberrationEffect.offset.set(_caStrength, _caStrength * 0.4);
 
     // --- Update effects ---
     sparks.update(delta);

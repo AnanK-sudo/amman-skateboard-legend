@@ -15,9 +15,11 @@
   "type": "module",
   "dependencies": {
     "cannon-es": "^0.20.0",
+    "postprocessing": "^6.39.1",
     "three": "^0.184.0"
   },
   "devDependencies": {
+    "@types/geojson": "^7946.0.16",
     "@types/three": "^0.184.0",
     "jsdom": "^29.0.2",
     "typescript": "^6.0.3",
