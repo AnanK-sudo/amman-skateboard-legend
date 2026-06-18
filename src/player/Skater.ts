@@ -41,6 +41,7 @@ export class Skater {
   private upperGroup:  THREE.Group;   // torso / arms / head (opened toward front)
 
   private boardGroup: THREE.Group;
+  private pelvisGroup: THREE.Group;
 
   // Articulated legs: hip → thigh → knee → shin → ankle → foot
   private leftHip:   THREE.Group;
@@ -107,20 +108,18 @@ export class Skater {
     this.world = world;
 
     this.body = new CANNON.Body({
-      mass: 70,
+      type: CANNON.Body.KINEMATIC,
       shape: new CANNON.Box(new CANNON.Vec3(0.3, 0.9, 0.15)),
       position: new CANNON.Vec3(spawn?.x ?? 0, spawn?.y ?? 1, spawn?.z ?? 0),
-      linearDamping: 0.2,
-      angularDamping: 0.99,
       fixedRotation: true,
     });
     world.addBody(this.body);
 
     this.mesh = new THREE.Group();
 
-    // ── Stance layer (feet sideways) ───────────────────────────────────────
+    // ── Stance layer — starts front-facing (0); dynamic in update ─────────
     this.stanceGroup = new THREE.Group();
-    this.stanceGroup.rotation.y = Math.PI / 2;
+    this.stanceGroup.rotation.y = 0;
     this.mesh.add(this.stanceGroup);
 
     // ── Animation layer ────────────────────────────────────────────────────
@@ -131,9 +130,9 @@ export class Skater {
     this.lowerGroup = new THREE.Group();
     this.innerGroup.add(this.lowerGroup);
 
-    // ── Upper body (torso + arms + head, opened ~50° toward front) ────────
+    // ── Upper body — rotation kept near-forward in world space by update ──
     this.upperGroup = new THREE.Group();
-    this.upperGroup.rotation.y = -Math.PI * 0.55; // opens chest toward travel dir
+    this.upperGroup.rotation.y = -Math.PI * 0.05; // near-forward when stance=0
     this.innerGroup.add(this.upperGroup);
 
     // ── Materials ──────────────────────────────────────────────────────────
@@ -204,9 +203,10 @@ export class Skater {
     // bottom and leg tops — hides the rotation seam completely.
     // ══════════════════════════════════════════════════════════════════════
 
-    const pelvisGroup = new THREE.Group();
-    pelvisGroup.rotation.y = -Math.PI * 0.24;
-    this.innerGroup.add(pelvisGroup);
+    this.pelvisGroup = new THREE.Group();
+    this.pelvisGroup.rotation.y = -Math.PI * 0.025; // matches stance=0 start
+    this.innerGroup.add(this.pelvisGroup);
+    const pelvisGroup = this.pelvisGroup; // local alias for the rest of constructor
 
     // Main pelvis block (pants colour — spans gap between legs and torso)
     const pelvisMesh = new THREE.Mesh(
@@ -365,6 +365,11 @@ export class Skater {
     if (trick === 'none') return;
     this.trickAnim  = trick;
     this.trickTimer = 0;
+    // Auto-ollie: any trick except manual pops the board into the air
+    if (!this.airborne && trick !== 'manual') {
+      this.verticalVel = this.ollieImpulse;
+      this.airborne    = true;
+    }
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────────
@@ -382,6 +387,41 @@ export class Skater {
     hip.rotation.x   = this.lerp(hip.rotation.x,   hipX,   rate, dt);
     knee.rotation.x  = this.lerp(knee.rotation.x,  kneeX,  rate, dt);
     ankle.rotation.x = this.lerp(ankle.rotation.x, ankleX, rate, dt);
+  }
+
+  /** Project horizontal movement away from near-vertical walls using a single raycast. */
+  private resolveWalls(dx: number, dz: number): [number, number] {
+    const moveDist = Math.sqrt(dx * dx + dz * dz);
+    if (moveDist < 0.001) return [dx, dz];
+
+    const BODY_RADIUS = 0.35;
+    const nx = dx / moveDist, nz = dz / moveDist;
+
+    const from = new CANNON.Vec3(this.body.position.x, this.body.position.y, this.body.position.z);
+    const to   = new CANNON.Vec3(
+      from.x + nx * (BODY_RADIUS + moveDist + 0.05),
+      from.y,
+      from.z + nz * (BODY_RADIUS + moveDist + 0.05),
+    );
+    const res = new CANNON.RaycastResult();
+    this.world.raycastClosest(from, to, { skipBackfaces: false, collisionFilterGroup: 1, collisionFilterMask: 1 }, res);
+
+    if (!res.hasHit || !res.hitPointWorld || !res.hitNormalWorld) return [dx, dz];
+
+    // Only block on near-vertical surfaces (walls); let slopes pass through for ramp riding
+    if (Math.abs(res.hitNormalWorld.y) > 0.5) return [dx, dz];
+
+    const hitDist = Math.sqrt(
+      (res.hitPointWorld.x - this.body.position.x) ** 2 +
+      (res.hitPointWorld.z - this.body.position.z) ** 2,
+    );
+    if (hitDist >= BODY_RADIUS + moveDist) return [dx, dz];
+
+    // Slide along wall surface
+    const wnx = res.hitNormalWorld.x, wnz = res.hitNormalWorld.z;
+    const dot = dx * wnx + dz * wnz;
+    if (dot >= 0) return [dx, dz]; // moving away from wall already
+    return [dx - dot * wnx, dz - dot * wnz];
   }
 
   // ── Main update ────────────────────────────────────────────────────────────
@@ -453,8 +493,6 @@ export class Skater {
       const bRF = new CANNON.Vec3(this.body.position.x, this.body.position.y + 2, this.body.position.z);
       const bRT = new CANNON.Vec3(this.body.position.x, -10, this.body.position.z);
       const bRR = new CANNON.RaycastResult();
-      this.body.collisionFilterGroup = 2;
-      this.body.collisionFilterMask  = 1;
       this.world.raycastClosest(bRF, bRT, { skipBackfaces: true, collisionFilterGroup: 1, collisionFilterMask: 1 }, bRR);
       if (bRR.hasHit && bRR.hitPointWorld) this.groundY = bRR.hitPointWorld.y;
       const bailFeet = this.groundY + this.HALF_HEIGHT;
@@ -496,15 +534,14 @@ export class Skater {
     if (this.isPushing && !wasPushing) this.pushPhase = 0;
     if (this.isPushing) this.pushPhase += delta * 3.0;
 
-    this.body.position.x += forward.x * this._speed * delta;
-    this.body.position.z += forward.z * this._speed * delta;
+    let [_dx, _dz] = this.resolveWalls(forward.x * this._speed * delta, forward.z * this._speed * delta);
+    this.body.position.x += _dx;
+    this.body.position.z += _dz;
 
     // Raycast ground
     const rayFrom   = new CANNON.Vec3(this.body.position.x, this.body.position.y + 2, this.body.position.z);
     const rayTo     = new CANNON.Vec3(this.body.position.x, -10, this.body.position.z);
     const rayResult = new CANNON.RaycastResult();
-    this.body.collisionFilterGroup = 2;
-    this.body.collisionFilterMask  = 1;
     const hasHit = this.world.raycastClosest(rayFrom, rayTo, { skipBackfaces: true, collisionFilterGroup: 1, collisionFilterMask: 1 }, rayResult);
     if (hasHit && rayResult.hitPointWorld && rayResult.body !== this.body) this.groundY = rayResult.hitPointWorld.y;
     else this.groundY = 0;
@@ -728,6 +765,15 @@ export class Skater {
         this.innerGroup.position.set(0, 0, 0);
       }
     }
+
+    // Dynamic stance: front-facing (0) when idle or pushing, sideways (PI/2) when riding/airborne
+    const _stanceTarget = (this.airborne || (this._speed > 0.5 && !this.isPushing)) ? Math.PI / 2 : 0;
+    this.stanceGroup.rotation.y = this.lerp(this.stanceGroup.rotation.y, _stanceTarget, 5, delta);
+    // Upper body world angle stays near-forward (-PI*0.05) regardless of foot stance
+    this.upperGroup.rotation.y  = this.lerp(this.upperGroup.rotation.y, -Math.PI * 0.05 - this.stanceGroup.rotation.y, 7, delta);
+    // Pelvis bridges between lower (stance-relative) and upper (world-forward)
+    const _pelvisMid = (this.stanceGroup.rotation.y + (-Math.PI * 0.05)) / 2;
+    this.pelvisGroup.rotation.y = this.lerp(this.pelvisGroup.rotation.y, _pelvisMid - this.stanceGroup.rotation.y, 5, delta);
 
     // Sync mesh to physics
     this.mesh.position.set(
