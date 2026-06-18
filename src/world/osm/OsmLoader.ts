@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import type * as GeoJSON from 'geojson';
 
 const METERS_PER_DEG_LAT = 111320;
 

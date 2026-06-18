@@ -5,7 +5,7 @@ import { Rail } from '../objects/Rail';
 import { Ramp } from '../objects/Ramp';
 import { Ledge } from '../objects/Ledge';
 import { Platform } from '../objects/Platform';
-import { createConcreteMaterial, createStoneMaterial } from '@/shaders/GraffitiMaterial';
+import { createConcreteMaterial, createStoneMaterial, createPBRConcreteMaterial } from '@/shaders/GraffitiMaterial';
 
 export class SkatePark implements Zone {
   readonly config: ZoneConfig = {
@@ -99,7 +99,7 @@ export class SkatePark implements Zone {
     // === GROUND ===
     const ground = new THREE.Mesh(
       new THREE.PlaneGeometry(80, 80),
-      createConcreteMaterial(0xa8a090)
+      createPBRConcreteMaterial(12),
     );
     ground.rotation.x = -Math.PI / 2;
     ground.receiveShadow = true;

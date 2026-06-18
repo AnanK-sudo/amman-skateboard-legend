@@ -5,7 +5,7 @@ import { Rail } from '../objects/Rail';
 import { Ramp } from '../objects/Ramp';
 import { Ledge } from '../objects/Ledge';
 import { Platform } from '../objects/Platform';
-import { createStoneMaterial, createConcreteMaterial } from '@/shaders/GraffitiMaterial';
+import { createStoneMaterial, createConcreteMaterial, createPBRConcreteMaterial, createPBRStoneMaterial, createPBRPavingMaterial } from '@/shaders/GraffitiMaterial';
 import { loadBuilding } from '../BuildingLoader';
 
 // 7 Hills Skate Park, Amman, Jordan — daytime, limestone architecture
@@ -65,24 +65,40 @@ export class OldAmman implements Zone {
     this.addBody(world, body);
   }
 
-  // Limestone building with windows, balconies, roof parapet
+  // Build a pointed Islamic arch window using ExtrudeGeometry
+  private makeArchWindow(winW: number, winH: number): THREE.BufferGeometry {
+    const archH = winH * 0.35; // pointed tip portion
+    const shape = new THREE.Shape();
+    shape.moveTo(-winW / 2, 0);
+    shape.lineTo(-winW / 2, winH - archH);
+    // Pointed arch: two curves meeting at the tip
+    shape.quadraticCurveTo(-winW / 2, winH + archH * 0.4, 0, winH + archH * 0.55);
+    shape.quadraticCurveTo(winW / 2, winH + archH * 0.4, winW / 2, winH - archH);
+    shape.lineTo(winW / 2, 0);
+    shape.closePath();
+    return new THREE.ShapeGeometry(shape);
+  }
+
+  // Limestone Amman building — Islamic arch windows, facade bands, cornice, balconies
   private addBuilding(
     scene: THREE.Scene, world: CANNON.World,
     x: number, z: number,
     w: number, h: number, d: number,
     baseColor: number, rotY = 0
   ): void {
-    const stoneMat = createStoneMaterial(baseColor);
+    const stoneMat   = createStoneMaterial(baseColor);
+    const lightMat   = createStoneMaterial(Math.min(0xffffff, baseColor + 0x141410));
+    const darkMat    = createStoneMaterial(Math.max(0, baseColor - 0x0c0c0a));
 
-    // Main body
-    const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), stoneMat);
-    body.position.set(x, h / 2, z);
-    body.rotation.y = rotY;
-    body.castShadow = true;
-    body.receiveShadow = true;
-    this.addMesh(scene, body);
+    // ── Main body ──
+    const bodyMesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), stoneMat);
+    bodyMesh.position.set(x, h / 2, z);
+    bodyMesh.rotation.y = rotY;
+    bodyMesh.castShadow = true;
+    bodyMesh.receiveShadow = true;
+    this.addMesh(scene, bodyMesh);
 
-    // Physics (simple box — no need for window detail in collision)
+    // Physics box
     const phys = new CANNON.Body({
       type: CANNON.Body.STATIC,
       shape: new CANNON.Box(new CANNON.Vec3(w / 2, h / 2, d / 2)),
@@ -91,94 +107,215 @@ export class OldAmman implements Zone {
     if (rotY !== 0) phys.quaternion.setFromAxisAngle(new CANNON.Vec3(0, 1, 0), rotY);
     this.addBody(world, phys);
 
-    // Window material — dark tinted glass
+    // ── Horizontal facade bands every ~2.8m (floor lines) ──
+    const floors = Math.max(1, Math.floor(h / 2.8));
+    const bandMat = darkMat;
+    for (let f = 1; f < floors; f++) {
+      const by = (f / floors) * h;
+      const band = new THREE.Mesh(new THREE.BoxGeometry(w + 0.1, 0.12, d + 0.1), bandMat);
+      band.position.set(x, by, z);
+      band.rotation.y = rotY;
+      this.addMesh(scene, band);
+    }
+
+    // ── Islamic arch windows ──
     const winMat = new THREE.MeshStandardMaterial({
-      color: 0x2a3a48,
-      roughness: 0.1,
-      metalness: 0.6,
-      envMapIntensity: 1.0,
+      color: 0x1a2e3a, roughness: 0.05, metalness: 0.7,
     });
+    const archFrameMat = lightMat;
+    const shutterMat = new THREE.MeshStandardMaterial({ color: 0x6b4520, roughness: 0.85 });
 
-    // Window shutters (warm wood tone)
-    const shutterMat = new THREE.MeshStandardMaterial({ color: 0x7a5230, roughness: 0.8 });
-
-    // Add windows on front (z+) and back (z−) faces
-    const rows = Math.max(1, Math.floor(h / 2.8));
     const cols = Math.max(1, Math.floor(w / 2.6));
-    const winW = 0.75, winH = 1.0;
+    const winW = 0.72, winH = 1.05;
+    const archGeo = this.makeArchWindow(winW, winH);
 
     for (let face = 0; face < 2; face++) {
-      const faceZ = face === 0 ? d / 2 + 0.06 : -(d / 2 + 0.06);
-      const faceDirZ = face === 0 ? 0 : Math.PI;
-      for (let r = 0; r < rows; r++) {
+      const faceOffset = face === 0 ? d / 2 : -(d / 2);
+      const faceRot    = face === 0 ? 0 : Math.PI;
+      const faceDir    = face === 0 ? 1 : -1;
+
+      for (let fl = 0; fl < floors; fl++) {
+        const wy = 1.1 + fl * (h / floors);
         for (let c = 0; c < cols; c++) {
           const wx = x + (-w / 2 + (c + 0.5) * (w / cols));
-          const wy = 0.9 + r * (h / rows);
-          const wz = z + faceZ;
+          const wz = z + faceOffset * 1.01;
 
-          // Glass pane
-          const win = new THREE.Mesh(new THREE.PlaneGeometry(winW, winH), winMat);
-          win.position.set(wx, wy, wz);
-          win.rotation.y = rotY + faceDirZ;
-          this.addMesh(scene, win);
+          // Glass pane (arch shape)
+          const pane = new THREE.Mesh(archGeo, winMat);
+          pane.position.set(wx, wy, wz);
+          pane.rotation.y = rotY + faceRot;
+          this.addMesh(scene, pane);
 
-          // Shutter pair (flanking the window)
-          const shutW = 0.18, shutH = winH + 0.05;
-          for (const side of [-1, 1]) {
-            const shutter = new THREE.Mesh(new THREE.BoxGeometry(shutW, shutH, 0.04), shutterMat);
-            shutter.position.set(wx + side * (winW / 2 + shutW / 2 + 0.02), wy, wz + (face === 0 ? 0.03 : -0.03));
-            shutter.rotation.y = rotY + faceDirZ;
+          // Arch frame — thin box surround
+          const frameW = winW + 0.12, frameH = winH + 0.18;
+          const frame = new THREE.Mesh(
+            new THREE.BoxGeometry(frameW, frameH, 0.08),
+            archFrameMat
+          );
+          frame.position.set(wx, wy + winH * 0.05, wz + faceDir * 0.03);
+          frame.rotation.y = rotY + faceRot;
+          this.addMesh(scene, frame);
+
+          // Wooden shutters (open, flanking)
+          for (const side of [-1, 1] as const) {
+            const shutter = new THREE.Mesh(
+              new THREE.BoxGeometry(0.2, winH, 0.04), shutterMat
+            );
+            shutter.position.set(
+              wx + side * (winW / 2 + 0.12),
+              wy + winH * 0.05,
+              wz + faceDir * 0.05
+            );
+            shutter.rotation.y = rotY + faceRot;
             this.addMesh(scene, shutter);
           }
         }
       }
     }
 
-    // Roof parapet — slightly wider/deeper than building body
-    const parapetMat = createStoneMaterial(baseColor + 0x0a0a08);
-    const parapet = new THREE.Mesh(new THREE.BoxGeometry(w + 0.25, 0.35, d + 0.25), parapetMat);
-    parapet.position.set(x, h + 0.175, z);
-    parapet.rotation.y = rotY;
-    parapet.castShadow = true;
-    this.addMesh(scene, parapet);
+    // ── Decorative cornice (pronounced overhang at roofline) ──
+    const corniceBot = new THREE.Mesh(new THREE.BoxGeometry(w + 0.5, 0.15, d + 0.5), darkMat);
+    corniceBot.position.set(x, h - 0.3, z);
+    corniceBot.rotation.y = rotY;
+    corniceBot.castShadow = true;
+    this.addMesh(scene, corniceBot);
 
-    // Roof detail — water tank / HVAC box (random per building)
-    if ((x + z) % 3 > 0.5) {
-      const tankMat = new THREE.MeshStandardMaterial({ color: 0x888878, roughness: 0.7 });
-      const tankW = 0.8 + (Math.abs(x) % 2) * 0.3;
-      const tank = new THREE.Mesh(new THREE.BoxGeometry(tankW, 0.9, tankW), tankMat);
-      tank.position.set(x + (w / 2 - tankW), h + 0.8, z + (d / 2 - tankW));
-      tank.rotation.y = rotY;
-      tank.castShadow = true;
-      this.addMesh(scene, tank);
-    }
+    const corniceTop = new THREE.Mesh(new THREE.BoxGeometry(w + 0.7, 0.22, d + 0.7), lightMat);
+    corniceTop.position.set(x, h, z);
+    corniceTop.rotation.y = rotY;
+    corniceTop.castShadow = true;
+    this.addMesh(scene, corniceTop);
 
-    // Balcony on second floor (if tall enough)
-    if (h > 5 && rows >= 2) {
-      const balMat = createStoneMaterial(baseColor - 0x080806);
-      // Front balcony
-      const balcony = new THREE.Mesh(new THREE.BoxGeometry(w * 0.55, 0.1, 0.7), balMat);
-      balcony.position.set(x, 0.9 + (h / rows), z + d / 2 + 0.35);
-      balcony.rotation.y = rotY;
-      balcony.castShadow = true;
-      balcony.receiveShadow = true;
-      this.addMesh(scene, balcony);
-
-      // Balcony railing posts
-      const railMat = new THREE.MeshStandardMaterial({ color: 0x555545, roughness: 0.5, metalness: 0.3 });
-      const postCount = Math.floor(w * 0.55 / 0.4);
-      for (let p = 0; p <= postCount; p++) {
-        const px = x - (w * 0.55 / 2) + p * (w * 0.55 / postCount);
-        const post = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.6, 0.06), railMat);
-        post.position.set(px, 0.9 + (h / rows) + 0.3, z + d / 2 + 0.35);
-        post.rotation.y = rotY;
-        this.addMesh(scene, post);
+    // ── Roof parapet with crenellations ──
+    const crenH = 0.55, crenW = 0.5;
+    const perimX = [-w / 2, w / 2];
+    for (const px of perimX) {
+      const count = Math.floor(d / (crenW * 2));
+      for (let i = 0; i < count; i++) {
+        if (i % 2 === 0) {
+          const cr = new THREE.Mesh(new THREE.BoxGeometry(0.3, crenH, crenW), lightMat);
+          const lx = x + px + (px > 0 ? -0.15 : 0.15);
+          cr.position.set(lx, h + crenH / 2 + 0.22, z - d / 2 + i * crenW * 2 + crenW);
+          cr.rotation.y = rotY;
+          cr.castShadow = true;
+          this.addMesh(scene, cr);
+        }
       }
-      const railBar = new THREE.Mesh(new THREE.BoxGeometry(w * 0.55 + 0.06, 0.05, 0.06), railMat);
-      railBar.position.set(x, 0.9 + (h / rows) + 0.62, z + d / 2 + 0.35);
-      railBar.rotation.y = rotY;
-      this.addMesh(scene, railBar);
     }
+    const perimZ = [-d / 2, d / 2];
+    for (const pz of perimZ) {
+      const count = Math.floor(w / (crenW * 2));
+      for (let i = 0; i < count; i++) {
+        if (i % 2 === 0) {
+          const cr = new THREE.Mesh(new THREE.BoxGeometry(crenW, crenH, 0.3), lightMat);
+          cr.position.set(x - w / 2 + i * crenW * 2 + crenW, h + crenH / 2 + 0.22, z + pz + (pz > 0 ? -0.15 : 0.15));
+          cr.rotation.y = rotY;
+          cr.castShadow = true;
+          this.addMesh(scene, cr);
+        }
+      }
+    }
+
+    // ── Rooftop water tanks ──
+    const tankMat = new THREE.MeshStandardMaterial({ color: 0x909080, roughness: 0.75 });
+    const tankH = 1.0, tankR = 0.45 + (Math.abs(x * 0.1) % 0.25);
+    const tank = new THREE.Mesh(new THREE.CylinderGeometry(tankR, tankR, tankH, 8), tankMat);
+    tank.position.set(x + w * 0.3, h + 0.22 + tankH / 2, z + d * 0.3);
+    tank.castShadow = true;
+    this.addMesh(scene, tank);
+
+    // ── Balconies every other floor on front face ──
+    if (floors >= 2) {
+      const balMat = lightMat;
+      const railMat = new THREE.MeshStandardMaterial({ color: 0x443322, roughness: 0.6, metalness: 0.2 });
+      for (let fl = 1; fl < floors; fl += 2) {
+        const by = 1.1 + fl * (h / floors);
+        const bw = w * 0.5;
+        const cosR = Math.cos(rotY), sinR = Math.sin(rotY);
+        const balOffZ = d / 2 + 0.4;
+
+        // Slab
+        const slab = new THREE.Mesh(new THREE.BoxGeometry(bw, 0.12, 0.85), balMat);
+        slab.position.set(
+          x + (-sinR) * balOffZ,
+          by,
+          z + cosR * balOffZ
+        );
+        slab.rotation.y = rotY;
+        slab.castShadow = true;
+        slab.receiveShadow = true;
+        this.addMesh(scene, slab);
+
+        // Railing posts
+        const posts = Math.floor(bw / 0.38);
+        for (let p = 0; p <= posts; p++) {
+          const localX = -bw / 2 + p * (bw / posts);
+          const post = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.65, 0.07), railMat);
+          post.position.set(
+            x + localX * cosR + (-sinR) * balOffZ,
+            by + 0.38,
+            z + localX * sinR + cosR * balOffZ
+          );
+          post.rotation.y = rotY;
+          this.addMesh(scene, post);
+        }
+
+        // Top rail bar
+        const rail = new THREE.Mesh(new THREE.BoxGeometry(bw + 0.08, 0.06, 0.06), railMat);
+        rail.position.set(
+          x + (-sinR) * balOffZ,
+          by + 0.7,
+          z + cosR * balOffZ
+        );
+        rail.rotation.y = rotY;
+        this.addMesh(scene, rail);
+      }
+    }
+  }
+
+  // Minaret — tall slender tower with Islamic tiers, typical of Amman mosques
+  private addMinaret(scene: THREE.Scene, world: CANNON.World, x: number, z: number, h = 20): void {
+    const stoneMat  = createStoneMaterial(0xd8c8a0);
+    const accentMat = createStoneMaterial(0xe8d8b0);
+    const r = 0.7;
+
+    // Shaft
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(r, r * 1.1, h, 12), stoneMat);
+    shaft.position.set(x, h / 2, z);
+    shaft.castShadow = true;
+    this.addMesh(scene, shaft);
+
+    // Balcony tier at 2/3 height
+    const tierY = h * 0.65;
+    const tier = new THREE.Mesh(new THREE.CylinderGeometry(r + 0.5, r + 0.2, 0.4, 12), accentMat);
+    tier.position.set(x, tierY, z);
+    tier.castShadow = true;
+    this.addMesh(scene, tier);
+
+    // Tapering upper section above balcony
+    const upper = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.55, r, h * 0.3, 12), stoneMat);
+    upper.position.set(x, tierY + h * 0.15, z);
+    upper.castShadow = true;
+    this.addMesh(scene, upper);
+
+    // Onion dome at top
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(r * 0.75, 12, 10, 0, Math.PI * 2, 0, Math.PI * 0.6), accentMat);
+    dome.position.set(x, h + 0.1, z);
+    dome.castShadow = true;
+    this.addMesh(scene, dome);
+
+    // Pointed tip (cone)
+    const tip = new THREE.Mesh(new THREE.ConeGeometry(0.12, 1.0, 8), accentMat);
+    tip.position.set(x, h + 0.9, z);
+    this.addMesh(scene, tip);
+
+    // Physics — simple cylinder
+    const body = new CANNON.Body({
+      type: CANNON.Body.STATIC,
+      shape: new CANNON.Cylinder(r, r * 1.1, h, 8),
+      position: new CANNON.Vec3(x, h / 2, z),
+    });
+    this.addBody(world, body);
   }
 
   // Tree: cylinder trunk + cone canopy
@@ -274,8 +411,8 @@ export class OldAmman implements Zone {
     groundBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2);
     this.addBody(world, groundBody);
 
-    // Concrete park surface
-    const concreteMat = createConcreteMaterial(0xb8aa90);
+    // Concrete park surface — real PBR texture from Poly Haven
+    const concreteMat = createPBRConcreteMaterial(8);
     const concrete = new THREE.Mesh(new THREE.PlaneGeometry(48, 36), concreteMat);
     concrete.rotation.x = -Math.PI / 2;
     concrete.position.set(0, 0.01, 2);
@@ -454,9 +591,10 @@ export class OldAmman implements Zone {
     // =========================================================
     // HILLSIDE TERRAIN — Amman valley walls
     // =========================================================
-    const hillMat = createStoneMaterial(0xc4b48c);
-    const hillMatLight = createStoneMaterial(0xd0c098);
-    const hillMatAlt = createStoneMaterial(0xc8b890);
+    // Hillside terrain — real PBR limestone/rock texture
+    const hillMat = createPBRStoneMaterial(5);
+    const hillMatLight = createPBRStoneMaterial(6);
+    const hillMatAlt = createPBRStoneMaterial(4);
 
     this.addBox(scene, world, 0, 0, -40, 90, 12, 18, hillMat);
     this.addBox(scene, world, 0, 0, -52, 100, 20, 12, hillMatLight);
@@ -526,7 +664,7 @@ export class OldAmman implements Zone {
     // =========================================================
     // RETAINING WALL + STREET LAMPS
     // =========================================================
-    const wallMat = createStoneMaterial(0xb8a878);
+    const wallMat = createPBRPavingMaterial(3);
     this.addBox(scene, world, 0, 0, -24, 50, 2.0, 0.6, wallMat);
     this.addBox(scene, world, -25, 0, -16, 0.6, 2.0, 16, wallMat);
     this.addBox(scene, world, 25, 0, -16, 0.6, 2.0, 16, wallMat);
@@ -536,7 +674,7 @@ export class OldAmman implements Zone {
     // =========================================================
     // Each entry: modelPath, position, scale, rotationY (radians)
     // If the file doesn't exist the loader silently skips it.
-    const buildingPlacements: [string, number, number, number, number, number][] = [
+    const buildingPlacements: [string, number, number, number, number][] = [
       // [modelPath,              x,    z,   scale, rotY,        ]
       ['/models/building_a.glb', -20, -46,   1.0,  0            ],
       ['/models/building_a.glb',  -8, -44,   1.2,  Math.PI / 4  ],
@@ -557,6 +695,14 @@ export class OldAmman implements Zone {
       });
       this.modelCleanups.push(cleanup);
     }
+
+    // =========================================================
+    // MINARETS — north and south hillsides
+    // =========================================================
+    this.addMinaret(scene, world, -35, -48, 22);
+    this.addMinaret(scene, world,  30, -50, 18);
+    this.addMinaret(scene, world, -32,  47, 20);
+    this.addMinaret(scene, world,  28,  45, 16);
 
     // Street lamps along the wall — with warm point lights casting pools on ground
     const lampMat = new THREE.MeshStandardMaterial({ color: 0x888878, roughness: 0.3, metalness: 0.7 });
