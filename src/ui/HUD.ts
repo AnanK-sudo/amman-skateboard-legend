@@ -115,7 +115,7 @@ export class HUD {
       boxShadow: `0 0 8px ${COLORS.green}44`,
       letterSpacing: '1px',
     });
-    this.zoneValue.textContent = '—';
+    this.zoneValue.textContent = '-';
 
     zoneBlock.appendChild(this.zoneLabel);
     zoneBlock.appendChild(this.zoneValue);

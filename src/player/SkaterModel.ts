@@ -47,7 +47,7 @@ export class SkaterModel {
     // ── FBX character ──────────────────────────────────────────────────────
     const loader = new FBXLoader();
     loader.load(
-      '/models/skater.fbx',
+      `${import.meta.env.BASE_URL}models/skater.fbx`,
       (fbx) => {
         fbx.scale.setScalar(0.01);
 

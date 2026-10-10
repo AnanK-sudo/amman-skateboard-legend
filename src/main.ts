@@ -724,22 +724,24 @@ window.addEventListener('resize', () => {
   followCam.camera.updateProjectionMatrix();
 });
 
-// Debug: show position and speed on screen
-const debugEl = document.createElement('div');
-Object.assign(debugEl.style, {
-  position: 'absolute', bottom: '50px', left: '16px',
-  color: '#3fb950', fontFamily: 'monospace', fontSize: '11px',
-  pointerEvents: 'none', zIndex: '999',
-});
-document.getElementById('hud')!.appendChild(debugEl);
+// Debug readout: dev server only
+if (import.meta.env.DEV) {
+  const debugEl = document.createElement('div');
+  Object.assign(debugEl.style, {
+    position: 'absolute', bottom: '50px', left: '16px',
+    color: '#3fb950', fontFamily: 'monospace', fontSize: '11px',
+    pointerEvents: 'none', zIndex: '999',
+  });
+  document.getElementById('hud')!.appendChild(debugEl);
 
-// Update debug info every frame via a second rAF (runs even when engine is paused)
-function debugLoop() {
-  const p = skater.body.position;
-  const v = skater.body.velocity;
-  debugEl.textContent = `pos: ${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)} | vel: ${v.x.toFixed(1)}, ${v.y.toFixed(1)}, ${v.z.toFixed(1)} | spd: ${skater.speed.toFixed(1)} | grnd: ${skater.isGrounded}`;
-  requestAnimationFrame(debugLoop);
+  // Update debug info every frame via a second rAF (runs even when engine is paused)
+  const debugLoop = () => {
+    const p = skater.body.position;
+    const v = skater.body.velocity;
+    debugEl.textContent = `pos: ${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)} | vel: ${v.x.toFixed(1)}, ${v.y.toFixed(1)}, ${v.z.toFixed(1)} | spd: ${skater.speed.toFixed(1)} | grnd: ${skater.isGrounded}`;
+    requestAnimationFrame(debugLoop);
+  };
+  debugLoop();
 }
-debugLoop();
 
-console.log('AMMAN SKATEBOARD LEGEND — click to start, WASD to move, Space to ollie, Enter to cash out combo, Tab to switch zones, Escape to pause');
+console.log('AMMAN SKATEBOARD LEGEND: click to start, WASD to move, Space to ollie, Enter to cash out combo, Tab to switch zones, Escape to pause');

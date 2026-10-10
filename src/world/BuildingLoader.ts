@@ -29,7 +29,7 @@ export function loadBuilding(
   let body: CANNON.Body | null = null;
 
   loader.load(
-    modelPath,
+    import.meta.env.BASE_URL + modelPath.replace(/^\//, ''),
     (gltf) => {
       mesh = gltf.scene;
       mesh.scale.setScalar(scale);
