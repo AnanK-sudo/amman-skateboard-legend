@@ -44,7 +44,7 @@ Changed files:
 
 ## Pose model
 
-- A pose sets joints in character rest space (character faces +Z, +X is its left, +Y up). For each driven bone the rig writes the bone's identity child slot: `local = W^-1 * R * W`, where `W` is the bone's rest world rotation relative to the FBX root and `R` the pose rotation (Euler XYZ, degrees). This rotates the joint about character axes regardless of Mixamo's bone axes and composes like FK.
+- A pose sets joints in character rest space (character faces +Z, +X is its left, +Y up). For each driven bone the rig sets `local = restLocal * W^-1 * R * W`, where `W` is the bone's rest rotation relative to the FBX root and `R` the pose rotation (Euler XYZ, degrees). (The identity duplicate bones in the FBX are leaves used by the joint mesh, not links in the chain, so they cannot carry the pose.) This rotates the joint about character axes regardless of Mixamo's bone axes and composes like FK.
 - Joints: `hips, spine, spine1, spine2, neck, head, frontArm, frontForeArm, backArm, backForeArm`. Legs come from IK. Arms are in T-pose at rest, so every pose brings them down.
 - Front/back: regular rides left foot forward. Front limbs map to Left bones in regular and Right bones in goofy. Goofy mirrors a pose across the sagittal plane: swap sides, negate Y and Z rotations.
 - Stance root yaw: regular `-90 deg` (chest faces the right of travel), goofy `+90 deg`.
