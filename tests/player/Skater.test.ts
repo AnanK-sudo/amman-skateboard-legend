@@ -161,8 +161,8 @@ describe('Skater trick state', () => {
     skater.playTrick('kickflip');
     skater.update(0.1, baseInput);
     expect(skater.trick).toBe('kickflip');
-    expect(skater.trickProgress).toBeGreaterThan(0.2);
-    expect(skater.trickProgress).toBeLessThan(0.3);
+    expect(skater.trickProgress).toBeGreaterThan(0.15);
+    expect(skater.trickProgress).toBeLessThan(0.25);
   });
 });
 
@@ -182,5 +182,41 @@ describe('Skater pushing', () => {
       skater.update(1 / 60, { ...baseInput, forward: true });
       if (skater.speed > before + 1e-9) expect(skater.pushState.phase).toBe('contact');
     }
+  });
+});
+
+describe('Skater animation facts', () => {
+  const OLLIE_AIRTIME = (2 * 6) / (9.82 * 2);
+
+  it('stretches a kickflip to fill most of the ollie airtime', () => {
+    const world = makeWorld();
+    const skater = new Skater(world, { x: 0, y: 0.9, z: 0 });
+    skater.playTrick('kickflip');
+    skater.update(OLLIE_AIRTIME * 0.85 / 2, baseInput);
+    expect(skater.trickProgress).toBeCloseTo(0.5, 1);
+  });
+
+  it('holds a manual for 0.6 s', () => {
+    const world = makeWorld();
+    const skater = new Skater(world, { x: 0, y: 0.9, z: 0 });
+    skater.playTrick('manual');
+    skater.update(0.3, baseInput);
+    expect(skater.trickProgress).toBeCloseTo(0.5, 1);
+  });
+
+  it('reports bail progress from 0 to 1', () => {
+    const world = makeWorld();
+    const skater = new Skater(world, { x: 0, y: 0.9, z: 0 });
+    skater.triggerBail();
+    skater.update(0.75, baseInput);
+    expect(skater.bailProgress).toBeCloseTo(0.5, 1);
+  });
+
+  it('reports turn input and braking', () => {
+    const world = makeWorld();
+    const skater = new Skater(world, { x: 0, y: 0.9, z: 0 });
+    skater.update(1 / 60, { ...baseInput, left: true, backward: true });
+    expect(skater.turnInput).toBe(1);
+    expect(skater.braking).toBe(true);
   });
 });

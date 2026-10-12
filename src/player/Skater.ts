@@ -23,6 +23,8 @@ const BAIL_GROUND = 0.65;
 const BAIL_GETUP  = 0.50;
 const BAIL_TOTAL  = BAIL_FALL + BAIL_GROUND + BAIL_GETUP;
 
+const GRAVITY = 9.82;
+const MANUAL_DURATION = 0.6;
 const BODY_RADIUS = 0.3;
 // Anything taller than this needs an ollie; curbs, stair steps (0.18) and bank-to-box lips roll over
 const STEP_HEIGHT = 0.3;
@@ -80,6 +82,8 @@ export class Skater {
   // Movement. Forward is +Z rotated by yaw, matching the Mixamo model and the follow camera.
   // Starting at PI heads toward -Z, where the zone layouts were built.
   private _yaw        = Math.PI;
+  private _turnInput  = 0;
+  private _braking    = false;
   private _speed      = 0;
   readonly maxSpeed   = 15;
   private pushThrust  = 28;   // only while the push foot is on the ground
@@ -364,6 +368,9 @@ export class Skater {
   get lean():      number        { return this.currentLean; }
   get shock():     number        { return this.landingShock; }
   get trick():     TrickAnim     { return this.trickAnim; }
+  get turnInput(): number        { return this._turnInput; }
+  get braking():   boolean       { return this._braking; }
+  get bailProgress(): number     { return this._isBailing ? Math.min(this.bailTimer / BAIL_TOTAL, 1) : 0; }
   get trickProgress(): number    { return this.trickAnim === 'none' ? 0 : Math.min(this.trickTimer / this.trickDuration, 1); }
   get position():  THREE.Vector3 {
     const p = this.body.position;
@@ -382,11 +389,17 @@ export class Skater {
     if (trick === 'none') return;
     this.trickAnim  = trick;
     this.trickTimer = 0;
+    if (trick === 'manual') { this.trickDuration = MANUAL_DURATION; return; }
     // Auto-ollie: any trick except manual pops the board into the air
-    if (!this.airborne && trick !== 'manual') {
+    if (!this.airborne) {
       this.verticalVel = this.ollieImpulse;
       this.airborne    = true;
     }
+    // Stretch the trick over most of the remaining flight so flips fill the jump
+    const g      = GRAVITY * 2;
+    const height = Math.max(0, this.body.position.y - this.HALF_HEIGHT - this.groundY);
+    const flight = (this.verticalVel + Math.sqrt(this.verticalVel ** 2 + 2 * g * height)) / g;
+    this.trickDuration = Math.min(Math.max(flight * 0.85, 0.35), 0.8);
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────────
@@ -535,7 +548,7 @@ export class Skater {
       }
 
       // Bail physics
-      this.verticalVel -= 9.82 * delta * 2;
+      this.verticalVel -= GRAVITY * delta * 2;
       this.body.position.y += this.verticalVel * delta;
       const bRF = new CANNON.Vec3(this.body.position.x, this.body.position.y + 2, this.body.position.z);
       const bRT = new CANNON.Vec3(this.body.position.x, -10, this.body.position.z);
@@ -561,6 +574,8 @@ export class Skater {
     // ══════════════════════════════════════════════════════════════════════
 
     const turnInput = (input.left ? 1 : 0) - (input.right ? 1 : 0);
+    this._turnInput = turnInput;
+    this._braking   = input.backward && !input.forward;
     this._yaw += turnInput * this.turnSpeed * delta;
 
     const forward = new CANNON.Vec3(Math.sin(this._yaw), 0, Math.cos(this._yaw));
@@ -636,7 +651,7 @@ export class Skater {
 
     const wasAirborne = this.airborne;
     if (this.airborne) {
-      this.verticalVel     -= 9.82 * delta * 2;
+      this.verticalVel     -= GRAVITY * delta * 2;
       this.body.position.y += this.verticalVel * delta;
       if (this.body.position.y <= feetHeight) {
         this.body.position.y = feetHeight;
@@ -780,57 +795,10 @@ export class Skater {
       for (const w of this.wheels) w.rotation.y += wheelSpin;
     }
 
-    // ══════════════════════════════════════════════════════════════════════
-    // TRICK ANIMATIONS
-    // ══════════════════════════════════════════════════════════════════════
+    // Trick timer; the visible SkaterModel animates the trick from trick/trickProgress
     if (this.trickAnim !== 'none') {
       this.trickTimer += delta;
       const t    = Math.min(this.trickTimer / this.trickDuration, 1);
-      const ease = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
-
-      switch (this.trickAnim) {
-        case 'kickflip':
-          this.boardGroup.rotation.x  =  ease * Math.PI * 2;
-          this.innerGroup.rotation.x  =  Math.sin(t * Math.PI) * 0.15;
-          this.poseLeg(this.leftHip,  this.leftKnee,  this.leftAnkle,  -0.65, 1.10, 0.10, 25, delta);
-          this.poseLeg(this.rightHip, this.rightKnee, this.rightAnkle, -0.50, 0.90, 0.08, 25, delta);
-          break;
-        case 'heelflip':
-          this.boardGroup.rotation.x  = -ease * Math.PI * 2;
-          this.innerGroup.rotation.x  =  Math.sin(t * Math.PI) * 0.15;
-          this.poseLeg(this.leftHip,  this.leftKnee,  this.leftAnkle,  -0.50, 0.90, 0.08, 25, delta);
-          this.poseLeg(this.rightHip, this.rightKnee, this.rightAnkle, -0.65, 1.10, 0.10, 25, delta);
-          break;
-        case 'tre_flip':
-          this.boardGroup.rotation.x  =  ease * Math.PI * 2;
-          this.boardGroup.rotation.y  =  ease * Math.PI * 2;
-          this.innerGroup.rotation.x  =  Math.sin(t * Math.PI) * 0.20;
-          break;
-        case 'ollie':
-          this.innerGroup.position.y  =  Math.sin(t * Math.PI) * 0.30;
-          this.innerGroup.rotation.x  =  Math.sin(t * Math.PI) * -0.10;
-          this.poseLeg(this.leftHip,  this.leftKnee,  this.leftAnkle,  -0.60 * Math.sin(t * Math.PI), 1.0 * Math.sin(t * Math.PI), 0.1, 20, delta);
-          this.poseLeg(this.rightHip, this.rightKnee, this.rightAnkle, -0.40 * Math.sin(t * Math.PI), 0.8 * Math.sin(t * Math.PI), 0.05, 20, delta);
-          break;
-        case 'manual':
-          this.boardGroup.rotation.x  = -0.28 * Math.sin(t * Math.PI);
-          this.innerGroup.rotation.x  = -0.12 * Math.sin(t * Math.PI);
-          this.leftArm.rotation.z     =  0.55 * Math.sin(t * Math.PI);
-          this.rightArm.rotation.z    = -0.55 * Math.sin(t * Math.PI);
-          break;
-        case 'grab':
-          this.innerGroup.rotation.x  =  Math.sin(t * Math.PI) * 0.35;
-          this.rightArm.rotation.x    =  Math.sin(t * Math.PI) * -1.1;
-          this.poseLeg(this.leftHip,  this.leftKnee,  this.leftAnkle,  -0.55, 1.05, 0.10, 20, delta);
-          this.poseLeg(this.rightHip, this.rightKnee, this.rightAnkle, -0.45, 0.90, 0.08, 20, delta);
-          break;
-        case 'spin':
-          this.innerGroup.rotation.y  =  ease * Math.PI * 2;
-          this.leftArm.rotation.z     =  0.80;
-          this.rightArm.rotation.z    = -0.80;
-          break;
-      }
-
       if (t >= 1) {
         this.trickAnim  = 'none';
         this.trickTimer = 0;
