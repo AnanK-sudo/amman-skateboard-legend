@@ -165,3 +165,22 @@ describe('Skater trick state', () => {
     expect(skater.trickProgress).toBeLessThan(0.3);
   });
 });
+
+describe('Skater pushing', () => {
+  it('reaches a useful speed from rest within two seconds of holding forward', () => {
+    const world = makeWorld();
+    const skater = new Skater(world, { x: 0, y: 0.9, z: 0 });
+    ride(world, skater, 120);
+    expect(skater.speed).toBeGreaterThan(8);
+  });
+
+  it('only gains speed while the push foot is on the ground', () => {
+    const world = makeWorld();
+    const skater = new Skater(world, { x: 0, y: 0.9, z: 0 });
+    for (let i = 0; i < 240; i++) {
+      const before = skater.speed;
+      skater.update(1 / 60, { ...baseInput, forward: true });
+      if (skater.speed > before + 1e-9) expect(skater.pushState.phase).toBe('contact');
+    }
+  });
+});

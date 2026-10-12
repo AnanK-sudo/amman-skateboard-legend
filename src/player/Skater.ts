@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
+import { PushCycle, type PushPhase } from './anim/PushCycle';
 
 export interface SkaterInput {
   forward: boolean;
@@ -81,7 +82,8 @@ export class Skater {
   private _yaw        = Math.PI;
   private _speed      = 0;
   readonly maxSpeed   = 15;
-  private pushForce   = 12;
+  private pushThrust  = 28;   // only while the push foot is on the ground
+  private push        = new PushCycle();
   private brakeForce  = 15;
   private turnSpeed   = 2.5;
   private ollieImpulse = 6;
@@ -356,6 +358,9 @@ export class Skater {
   get isGrounded(): boolean      { return !this.airborne; }
   get isAirborne(): boolean      { return this.airborne; }
   get pushing():   boolean       { return this.isPushing; }
+  get pushState(): { phase: PushPhase; phaseT: number; contactTravel: number; stride: number } {
+    return { phase: this.push.phase, phaseT: this.push.phaseT, contactTravel: this.push.contactTravel, stride: this.push.stride };
+  }
   get lean():      number        { return this.currentLean; }
   get shock():     number        { return this.landingShock; }
   get trick():     TrickAnim     { return this.trickAnim; }
@@ -562,16 +567,17 @@ export class Skater {
     if (input.forward || input.backward || input.ollie || input.left || input.right) this.body.wakeUp();
 
     const wasPushing = this.isPushing;
-    if (input.forward) {
-      this._speed  = Math.min(this._speed + this.pushForce * delta, this.maxSpeed);
-      this.isPushing = true;
+    const wantPush = input.forward && !input.backward && !this.airborne;
+    const thrusting = this.push.update(delta, this._speed, wantPush, this._speed >= this.maxSpeed * 0.98);
+    this.isPushing = this.push.phase !== 'none';
+    if (thrusting) {
+      this._speed = Math.min(this._speed + this.pushThrust * delta, this.maxSpeed);
     } else if (input.backward) {
-      this._speed  = Math.max(this._speed - this.brakeForce * delta, 0);
-      this.isPushing = false;
+      this._speed = Math.max(this._speed - this.brakeForce * delta, 0);
     } else {
-      this._speed *= (1 - 2 * delta);
+      // Rolling resistance is light between strokes, stronger when coasting
+      this._speed *= (1 - (this.isPushing || input.forward ? 0.3 : 2) * delta);
       if (this._speed < 0.01) this._speed = 0;
-      this.isPushing = false;
     }
     if (this.isPushing && !wasPushing) this.pushPhase = 0;
     if (this.isPushing) this.pushPhase += delta * 3.0;

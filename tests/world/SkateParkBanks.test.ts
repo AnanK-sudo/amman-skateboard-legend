@@ -25,14 +25,14 @@ function feetHeightAfterRiding(world: CANNON.World, spawn: { x: number; y: numbe
 
 describe('SkatePark banks are solid and face their platforms', () => {
   it('rides from the spawn up the south bank onto the fun box', () => {
-    expect(feetHeightAfterRiding(park(), { x: 0, y: 0.9, z: 8 }, Math.PI, 70)).toBeGreaterThan(0.6);
+    expect(feetHeightAfterRiding(park(), { x: 0, y: 0.9, z: 8 }, Math.PI, 150)).toBeGreaterThan(0.6);
   });
 
   it('rides up the east bank onto the pyramid heading west', () => {
-    expect(feetHeightAfterRiding(park(), { x: -2, y: 0.9, z: -8 }, -Math.PI / 2, 70)).toBeGreaterThan(0.9);
+    expect(feetHeightAfterRiding(park(), { x: -2, y: 0.9, z: -8 }, -Math.PI / 2, 150)).toBeGreaterThan(0.9);
   });
 
   it('rides up the west bank onto the pyramid heading east', () => {
-    expect(feetHeightAfterRiding(park(), { x: -18, y: 0.9, z: -8 }, Math.PI / 2, 70)).toBeGreaterThan(0.9);
+    expect(feetHeightAfterRiding(park(), { x: -18, y: 0.9, z: -8 }, Math.PI / 2, 150)).toBeGreaterThan(0.9);
   });
 });
