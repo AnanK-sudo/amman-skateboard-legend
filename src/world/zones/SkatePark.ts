@@ -67,7 +67,9 @@ export class SkatePark implements Zone {
     width: number, height: number, depth: number,
     rotation = 0, color = 0xb8aa88
   ) {
-    // A sloped bank/transition — wedge shape
+    // A sloped bank/transition — wedge shape. `rotation` sets which way it climbs:
+    // 0 toward -Z, PI toward +Z, PI/2 toward -X, -PI/2 toward +X. The wedge's high side is local -X.
+    const yaw = rotation - Math.PI / 2;
     const shape = new THREE.Shape();
     shape.moveTo(0, 0);
     shape.lineTo(depth, 0);
@@ -79,19 +81,19 @@ export class SkatePark implements Zone {
 
     const mesh = new THREE.Mesh(geo, createConcreteMaterial(color));
     mesh.position.set(x, 0, z);
-    mesh.rotation.y = rotation;
+    mesh.rotation.y = yaw;
     this.addMesh(scene, mesh);
 
-    // Physics — trimesh
-    const vertices = Array.from(new Float32Array(geo.attributes.position.array));
-    const indices = geo.index ? Array.from(geo.index.array) : [];
+    // Physics — trimesh. ExtrudeGeometry is non-indexed, so index the vertices in order.
+    const vertices = Array.from(geo.attributes.position.array);
+    const indices = geo.index ? Array.from(geo.index.array) : vertices.slice(0, vertices.length / 3).map((_, i) => i);
     const trimesh = new CANNON.Trimesh(vertices, indices);
     const body = new CANNON.Body({
       type: CANNON.Body.STATIC,
       shape: trimesh,
       position: new CANNON.Vec3(x, 0, z),
     });
-    body.quaternion.setFromAxisAngle(new CANNON.Vec3(0, 1, 0), rotation);
+    body.quaternion.setFromAxisAngle(new CANNON.Vec3(0, 1, 0), yaw);
     this.addBody(world, body);
   }
 
@@ -292,8 +294,8 @@ export class SkatePark implements Zone {
     // Banks on all 4 sides of pyramid
     this.createBank(scene, world, -10, -5.5, 4, 1.0, 2, 0);
     this.createBank(scene, world, -10, -10.5, 4, 1.0, 2, Math.PI);
-    this.createBank(scene, world, -7.5, -8, 4, 1.0, 2, -Math.PI / 2);
-    this.createBank(scene, world, -12.5, -8, 4, 1.0, 2, Math.PI / 2);
+    this.createBank(scene, world, -7.5, -8, 4, 1.0, 2, Math.PI / 2);
+    this.createBank(scene, world, -12.5, -8, 4, 1.0, 2, -Math.PI / 2);
 
     // === AMBIENT — ground markings / color variation ===
     // Faded paint markings for visual interest

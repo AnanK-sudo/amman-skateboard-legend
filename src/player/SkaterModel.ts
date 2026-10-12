@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+import type { TrickAnim } from './Skater';
 
 export interface SkaterAnimState {
   position: THREE.Vector3;
@@ -12,6 +13,8 @@ export interface SkaterAnimState {
   isBailing: boolean;
   lean: number;
   shock: number;
+  trick: TrickAnim;
+  trickProgress: number;
 }
 
 const B = {
@@ -31,8 +34,11 @@ export class SkaterModel {
   private bones: Partial<Record<string, THREE.Bone>> = {};
   private _loaded = false;
 
-  // Skateboard kept visible always (separate from FBX character)
+  // Whole-body trick motion (spins, grab tilt) lives on the pivot; board flips on boardFlip
+  private pivot: THREE.Group;
+  private body: THREE.Group;
   private boardGroup: THREE.Group;
+  private boardFlip: THREE.Group;
 
   get loaded() { return this._loaded; }
 
@@ -40,9 +46,22 @@ export class SkaterModel {
     this.group = new THREE.Group();
     scene.add(this.group);
 
+    this.pivot = new THREE.Group();
+    this.pivot.name = 'trickPivot';
+    this.group.add(this.pivot);
+
+    this.body = new THREE.Group();
+    this.pivot.add(this.body);
+
     // ── Skateboard (always visible, aligned with travel direction) ─────────
-    this.boardGroup = this._buildBoard();
-    this.group.add(this.boardGroup);
+    // Long axis along boardFlip's local X, so rotation.x there is a kickflip roll
+    this.boardGroup = new THREE.Group();
+    this.boardGroup.rotation.y = Math.PI / 2;
+    this.boardGroup.position.y = -0.04; // slight clearance below feet
+    this.boardFlip = this._buildBoard();
+    this.boardFlip.name = 'boardFlip';
+    this.boardGroup.add(this.boardFlip);
+    this.pivot.add(this.boardGroup);
 
     // ── FBX character ──────────────────────────────────────────────────────
     const loader = new FBXLoader();
@@ -66,7 +85,7 @@ export class SkaterModel {
           if ((child as THREE.Bone).isBone) this.bones[child.name] = child as THREE.Bone;
         });
 
-        this.group.add(fbx);
+        this.body.add(fbx);
 
         // Auto-correct Y so the character's feet land exactly on the board.
         // FBX bind pose feet are at box.min.y in group-local space; shift fbx
@@ -97,10 +116,6 @@ export class SkaterModel {
 
   private _buildBoard(): THREE.Group {
     const g = new THREE.Group();
-    // Board sits flat at Y=0 (feet level); long axis along group's local X
-    // = perpendicular to travel direction (real skater stance).
-    g.rotation.y = Math.PI / 2;
-    g.position.y = -0.04; // slight clearance below feet
 
     const deckMat  = new THREE.MeshStandardMaterial({ color: 0xd2a8ff });
     const kickMat  = new THREE.MeshStandardMaterial({ color: 0xb888e8 });
@@ -144,6 +159,49 @@ export class SkaterModel {
 
   private _wheels: THREE.Mesh[] = [];
 
+  private _applyTrick(trick: TrickAnim, t: number) {
+    const ease = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+    const arc  = Math.sin(t * Math.PI); // 0 → 1 → 0 over the trick
+
+    this.boardFlip.rotation.set(0, 0, 0);
+    this.boardFlip.position.y = 0;
+    this.pivot.rotation.set(0, 0, 0);
+    this.body.position.y = 0;
+
+    switch (trick) {
+      case 'kickflip':
+        this.boardFlip.rotation.x = ease * Math.PI * 2;
+        this.boardFlip.position.y = arc * 0.12;
+        this.body.position.y = arc * 0.25; // feet lift off so the board can turn under them
+        break;
+      case 'heelflip':
+        this.boardFlip.rotation.x = -ease * Math.PI * 2;
+        this.boardFlip.position.y = arc * 0.12;
+        this.body.position.y = arc * 0.25;
+        break;
+      case 'tre_flip':
+        this.boardFlip.rotation.x = ease * Math.PI * 2;
+        this.boardFlip.rotation.y = ease * Math.PI * 2;
+        this.boardFlip.position.y = arc * 0.15;
+        this.body.position.y = arc * 0.3;
+        break;
+      case 'ollie':
+        this.boardFlip.rotation.z = -arc * 0.35; // tail snap, nose up
+        break;
+      case 'manual':
+        this.boardFlip.rotation.z = -arc * 0.28;
+        this.pivot.rotation.x = -arc * 0.1;
+        break;
+      case 'grab':
+        this.boardFlip.position.y = arc * 0.3; // board pulled up to the hand
+        this.pivot.rotation.x = arc * 0.25;
+        break;
+      case 'spin':
+        this.pivot.rotation.y = ease * Math.PI * 2;
+        break;
+    }
+  }
+
   update(delta: number, state: SkaterAnimState) {
     // Group tracks physics body
     this.group.position.copy(state.position);
@@ -156,6 +214,8 @@ export class SkaterModel {
 
     // Board tilt matches lean
     this.boardGroup.rotation.z = state.lean * 0.55;
+
+    this._applyTrick(state.trick, state.trickProgress);
 
     if (!this._loaded || !this.mixer) return;
 
@@ -184,6 +244,9 @@ export class SkaterModel {
     // Head yaws into turn (overlapping action — head lags body)
     const head = this.bones[B.HEAD];
     if (head) head.rotation.y += state.lean * -0.30;
+
+    // Grab: fold the upper body down toward the board
+    if (spine1 && state.trick === 'grab') spine1.rotation.x += Math.sin(state.trickProgress * Math.PI) * 0.6;
 
     // Arms spread wider at speed (secondary action)
     const lArm = this.bones[B.L_ARM];

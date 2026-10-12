@@ -51,7 +51,7 @@ export class Minimap {
     // Direction arrow
     ctx.save();
     ctx.translate(px, pz);
-    ctx.rotate(-playerYaw);
+    ctx.rotate(Math.PI - playerYaw);
     ctx.fillStyle = '#ff6b35';
     ctx.beginPath();
     ctx.moveTo(0, -6);

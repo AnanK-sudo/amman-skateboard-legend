@@ -116,7 +116,7 @@ const zoneIds = ['skate_park', 'street', 'old_amman'] as const;
 let currentZoneIndex = 0;
 
 // --- Skater --- (must be after zone load so grindables can be registered after)
-const skater = new Skater(physics.world);
+const skater = new Skater(physics.world, zoneManager.getZone(zoneIds[0])!.config.spawnPoint);
 scene.add(skater.mesh);
 
 // --- Animated skater model (FBX, loads async) ---
@@ -441,6 +441,8 @@ engine = new Engine({
       isBailing:  skater.isBailing,
       lean:       skater.lean,
       shock:      skater.shock,
+      trick:      skater.trick,
+      trickProgress: skater.trickProgress,
     });
     physics.step(delta);
     followCam.update(delta, skater.position, skater.speed, skater.maxSpeed, skater.yaw);

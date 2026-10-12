@@ -22,6 +22,12 @@ const BAIL_GROUND = 0.65;
 const BAIL_GETUP  = 0.50;
 const BAIL_TOTAL  = BAIL_FALL + BAIL_GROUND + BAIL_GETUP;
 
+const BODY_RADIUS = 0.3;
+// Anything taller than this needs an ollie; curbs, stair steps (0.18) and bank-to-box lips roll over
+const STEP_HEIGHT = 0.3;
+const WALL_RAY_HEIGHTS = [STEP_HEIGHT + 0.02, 0.9, 1.6];
+const WALL_RAY_SIDES = [-1, -0.5, 0, 0.5, 1];
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Real-skater stance breakdown:
 //   • Feet / board:   fully sideways   (stanceGroup Y = +90°)
@@ -70,8 +76,9 @@ export class Skater {
   private bailTimer   = 0;
   private bailBoardX  = 0;
 
-  // Movement
-  private _yaw        = 0;
+  // Movement. Forward is +Z rotated by yaw, matching the Mixamo model and the follow camera.
+  // Starting at PI heads toward -Z, where the zone layouts were built.
+  private _yaw        = Math.PI;
   private _speed      = 0;
   readonly maxSpeed   = 15;
   private pushForce   = 12;
@@ -112,6 +119,9 @@ export class Skater {
       shape: new CANNON.Box(new CANNON.Vec3(0.3, 0.9, 0.15)),
       position: new CANNON.Vec3(spawn?.x ?? 0, spawn?.y ?? 1, spawn?.z ?? 0),
       fixedRotation: true,
+      // Own group, so the wall and ground rays (mask 1) never hit the skater's own box
+      collisionFilterGroup: 2,
+      collisionFilterMask: 1,
     });
     world.addBody(this.body);
 
@@ -348,6 +358,8 @@ export class Skater {
   get pushing():   boolean       { return this.isPushing; }
   get lean():      number        { return this.currentLean; }
   get shock():     number        { return this.landingShock; }
+  get trick():     TrickAnim     { return this.trickAnim; }
+  get trickProgress(): number    { return this.trickAnim === 'none' ? 0 : Math.min(this.trickTimer / this.trickDuration, 1); }
   get position():  THREE.Vector3 {
     const p = this.body.position;
     return this._positionVec.set(p.x, p.y, p.z);
@@ -389,39 +401,69 @@ export class Skater {
     ankle.rotation.x = this.lerp(ankle.rotation.x, ankleX, rate, dt);
   }
 
-  /** Project horizontal movement away from near-vertical walls using a single raycast. */
-  private resolveWalls(dx: number, dz: number): [number, number] {
+  /** Nearest near-vertical surface the body would run into, from a fan of rays across its width and height. */
+  private findWall(dx: number, dz: number): CANNON.Vec3 | null {
     const moveDist = Math.sqrt(dx * dx + dz * dz);
-    if (moveDist < 0.001) return [dx, dz];
-
-    const BODY_RADIUS = 0.35;
+    if (moveDist < 0.001) return null;
     const nx = dx / moveDist, nz = dz / moveDist;
+    const reach = BODY_RADIUS + moveDist + 0.05;
+    const feetY = this.body.position.y - this.HALF_HEIGHT;
 
-    const from = new CANNON.Vec3(this.body.position.x, this.body.position.y, this.body.position.z);
-    const to   = new CANNON.Vec3(
-      from.x + nx * (BODY_RADIUS + moveDist + 0.05),
-      from.y,
-      from.z + nz * (BODY_RADIUS + moveDist + 0.05),
-    );
+    let nearest = Infinity;
+    let normal: CANNON.Vec3 | null = null;
     const res = new CANNON.RaycastResult();
-    this.world.raycastClosest(from, to, { skipBackfaces: false, collisionFilterGroup: 1, collisionFilterMask: 1 }, res);
+    for (const h of WALL_RAY_HEIGHTS) {
+      for (const side of WALL_RAY_SIDES) {
+        const from = new CANNON.Vec3(
+          this.body.position.x - nz * side * BODY_RADIUS,
+          feetY + h,
+          this.body.position.z + nx * side * BODY_RADIUS,
+        );
+        const to = new CANNON.Vec3(from.x + nx * reach, from.y, from.z + nz * reach);
+        res.reset();
+        this.world.raycastClosest(from, to, { skipBackfaces: false, collisionFilterGroup: 1, collisionFilterMask: 1 }, res);
+        // Slopes (ramps, quarter pipes) are ridden, not blocked
+        if (!res.hasHit || Math.abs(res.hitNormalWorld.y) > 0.5) continue;
+        if (res.hitNormalWorld.x * nx + res.hitNormalWorld.z * nz >= 0) continue; // exit face of something we're already leaving
+        if (this.isStepUp(res.hitPointWorld, res.hitNormalWorld)) continue;
+        if (res.distance < nearest) {
+          nearest = res.distance;
+          normal = res.hitNormalWorld.clone();
+        }
+      }
+    }
+    return nearest < BODY_RADIUS + moveDist ? normal : null;
+  }
 
-    if (!res.hasHit || !res.hitPointWorld || !res.hitNormalWorld) return [dx, dz];
-
-    // Only block on near-vertical surfaces (walls); let slopes pass through for ramp riding
-    if (Math.abs(res.hitNormalWorld.y) > 0.5) return [dx, dz];
-
-    const hitDist = Math.sqrt(
-      (res.hitPointWorld.x - this.body.position.x) ** 2 +
-      (res.hitPointWorld.z - this.body.position.z) ** 2,
+  private groundBelow(x: number, z: number, fromY: number): number | null {
+    const res = new CANNON.RaycastResult();
+    this.world.raycastClosest(
+      new CANNON.Vec3(x, fromY, z), new CANNON.Vec3(x, -10, z),
+      { skipBackfaces: true, collisionFilterGroup: 1, collisionFilterMask: 1 }, res,
     );
-    if (hitDist >= BODY_RADIUS + moveDist) return [dx, dz];
+    return res.hasHit ? res.hitPointWorld.y : null;
+  }
 
-    // Slide along wall surface
-    const wnx = res.hitNormalWorld.x, wnz = res.hitNormalWorld.z;
-    const dot = dx * wnx + dz * wnz;
-    if (dot >= 0) return [dx, dz]; // moving away from wall already
-    return [dx - dot * wnx, dz - dot * wnz];
+  /** A face is only a wall if its top stands more than a step above the ground in front of it (e.g. a bank meeting a box). */
+  private isStepUp(hit: CANNON.Vec3, normal: CANNON.Vec3): boolean {
+    const probeY = hit.y + STEP_HEIGHT + 0.05;
+    const top    = this.groundBelow(hit.x - normal.x * 0.02, hit.z - normal.z * 0.02, probeY);
+    // Probe started inside the obstacle, so its top is higher than a step
+    if (top === null || top < hit.y) return false;
+    const front = this.groundBelow(hit.x + normal.x * 0.05, hit.z + normal.z * 0.05, hit.y);
+    return top - (front ?? 0) <= STEP_HEIGHT;
+  }
+
+  /** Slide horizontal movement along any walls in the way; a second pass catches corners. */
+  private resolveWalls(dx: number, dz: number): [number, number] {
+    for (let pass = 0; pass < 2; pass++) {
+      const n = this.findWall(dx, dz);
+      if (!n) return [dx, dz];
+      const dot = dx * n.x + dz * n.z;
+      dx -= dot * n.x;
+      dz -= dot * n.z;
+    }
+    return this.findWall(dx, dz) ? [0, 0] : [dx, dz];
   }
 
   // ── Main update ────────────────────────────────────────────────────────────
@@ -500,8 +542,8 @@ export class Skater {
       else this.airborne = true;
       if (this.body.position.y < -10) { this.body.position.set(0, 2, 0); this._speed = 0; this.verticalVel = 0; }
 
-      this.body.position.x += (-Math.sin(this._yaw)) * this._speed * delta;
-      this.body.position.z += (-Math.cos(this._yaw)) * this._speed * delta;
+      this.body.position.x += Math.sin(this._yaw) * this._speed * delta;
+      this.body.position.z += Math.cos(this._yaw) * this._speed * delta;
       this._speed *= (1 - 4 * delta);
       if (this._speed < 0.01) this._speed = 0;
       this.mesh.position.set(this.body.position.x, this.body.position.y - this.HALF_HEIGHT, this.body.position.z);
@@ -516,7 +558,7 @@ export class Skater {
     const turnInput = (input.left ? 1 : 0) - (input.right ? 1 : 0);
     this._yaw += turnInput * this.turnSpeed * delta;
 
-    const forward = new CANNON.Vec3(-Math.sin(this._yaw), 0, -Math.cos(this._yaw));
+    const forward = new CANNON.Vec3(Math.sin(this._yaw), 0, Math.cos(this._yaw));
     if (input.forward || input.backward || input.ollie || input.left || input.right) this.body.wakeUp();
 
     const wasPushing = this.isPushing;
@@ -534,17 +576,43 @@ export class Skater {
     if (this.isPushing && !wasPushing) this.pushPhase = 0;
     if (this.isPushing) this.pushPhase += delta * 3.0;
 
-    let [_dx, _dz] = this.resolveWalls(forward.x * this._speed * delta, forward.z * this._speed * delta);
+    const wantX = forward.x * this._speed * delta, wantZ = forward.z * this._speed * delta;
+    const [_dx, _dz] = this.resolveWalls(wantX, wantZ);
+    // Keep only the speed that survived the wall: head-on stops, a glancing hit slides on
+    const wanted = Math.hypot(wantX, wantZ);
+    if (wanted > 0.001) this._speed *= Math.hypot(_dx, _dz) / wanted;
     this.body.position.x += _dx;
     this.body.position.z += _dz;
 
     // Raycast ground
+    const groundBefore = this.groundY;
     const rayFrom   = new CANNON.Vec3(this.body.position.x, this.body.position.y + 2, this.body.position.z);
     const rayTo     = new CANNON.Vec3(this.body.position.x, -10, this.body.position.z);
     const rayResult = new CANNON.RaycastResult();
     const hasHit = this.world.raycastClosest(rayFrom, rayTo, { skipBackfaces: true, collisionFilterGroup: 1, collisionFilterMask: 1 }, rayResult);
-    if (hasHit && rayResult.hitPointWorld && rayResult.body !== this.body) this.groundY = rayResult.hitPointWorld.y;
+    if (hasHit) this.groundY = rayResult.hitPointWorld.y;
     else this.groundY = 0;
+
+    // A flat top more than a step above the feet is a ledge we clipped into, not ground to snap up onto.
+    // If the ground under the old position is just as high we were already embedded (e.g. spawned
+    // inside a platform), so let the snap lift us out instead of pinning us in place.
+    const feetY = this.body.position.y - this.HALF_HEIGHT;
+    if (!this.airborne && hasHit && this.groundY - feetY > STEP_HEIGHT && rayResult.hitNormalWorld.y > 0.95) {
+      const backX = this.body.position.x - _dx;
+      const backZ = this.body.position.z - _dz;
+      const back = new CANNON.RaycastResult();
+      this.world.raycastClosest(
+        new CANNON.Vec3(backX, this.body.position.y + 2, backZ), new CANNON.Vec3(backX, -10, backZ),
+        { skipBackfaces: true, collisionFilterGroup: 1, collisionFilterMask: 1 }, back,
+      );
+      const embedded = back.hasHit && back.hitPointWorld.y - feetY > STEP_HEIGHT;
+      if (!embedded) {
+        this.body.position.x = backX;
+        this.body.position.z = backZ;
+        this.groundY = groundBefore;
+        this._speed = 0;
+      }
+    }
 
     const feetHeight = this.groundY + this.HALF_HEIGHT;
 
@@ -577,7 +645,7 @@ export class Skater {
         this.airborne    = true;
         this.verticalVel = 0;
       } else {
-        this.body.position.y = this.lerp(currentY, feetHeight, 15, delta);
+        this.body.position.y = feetHeight;
       }
     }
 
