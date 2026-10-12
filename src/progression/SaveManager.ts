@@ -1,3 +1,5 @@
+import type { Stance } from '@/player/anim/mirror';
+
 const SAVE_KEY = 'anan_skate_save';
 
 export interface GameSave {
@@ -8,6 +10,7 @@ export interface GameSave {
   completedChallenges: string[];
   equippedBoard: string;
   equippedOutfit: string;
+  stance: Stance;
 }
 
 const DEFAULT_SAVE: GameSave = {
@@ -18,6 +21,7 @@ const DEFAULT_SAVE: GameSave = {
   completedChallenges: [],
   equippedBoard: 'default',
   equippedOutfit: 'default',
+  stance: 'regular',
 };
 
 export class SaveManager {

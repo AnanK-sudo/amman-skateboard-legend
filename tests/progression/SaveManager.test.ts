@@ -22,12 +22,20 @@ describe('SaveManager', () => {
       completedChallenges: ['park_grind_rail'],
       equippedBoard: 'graffiti',
       equippedOutfit: 'hoodie',
+      stance: 'goofy',
     };
     SaveManager.save(save);
     const loaded = SaveManager.load();
     expect(loaded.highScore).toBe(5000);
     expect(loaded.unlockedZones).toContain('street');
     expect(loaded.equippedBoard).toBe('graffiti');
+    expect(loaded.stance).toBe('goofy');
+  });
+
+  it('defaults to regular stance, including for saves made before stance existed', () => {
+    expect(SaveManager.load().stance).toBe('regular');
+    localStorage.setItem('anan_skate_save', JSON.stringify({ highScore: 10 }));
+    expect(SaveManager.load().stance).toBe('regular');
   });
 
   it('exports save as JSON string', () => {

@@ -296,6 +296,7 @@ const CHALLENGES: Challenge[] = [
 ];
 
 const save = SaveManager.load();
+skaterModel.setStance(save.stance);
 let totalScore = save.highScore;
 const challengeManager = new ChallengeManager(CHALLENGES);
 challengeManager.loadCompleted(save.completedChallenges);
@@ -364,6 +365,11 @@ const customizeMenu = new CustomizeMenu(customization, () => {
     }
     if (board) customization.applyToSkater(inner, board);
   } catch (e) { console.warn('Customize apply failed:', e); }
+});
+customizeMenu.addStanceToggle(save.stance, (stance) => {
+  save.stance = stance;
+  SaveManager.save(save);
+  skaterModel.setStance(stance);
 });
 customizeMenu.setOnClose(() => {
   pauseMenu.show(); // return to pause menu
@@ -454,19 +460,18 @@ engine = new Engine({
     // J = kickflip, K = heelflip, Space = plain ollie
     // J+K = tre flip, Shift = manual, L = grab (air), A/D in air = spin
 
-    if (skater.isGrounded && !skater.isBailing) {
+    // Captured once so a ground trick's pop doesn't also fire the air branch for the same key press
+    const trickFromGround = skater.isGrounded;
+    if (trickFromGround && !skater.isBailing) {
       if (input.justPressed('KeyJ') && input.isDown('KeyK')) {
-        skater.body.velocity.y = 6;
         trickSystem.landTrick('tre_flip');
         skater.playTrick('tre_flip');
         audio.playOlliePop(); audio.playFlipSwoosh();
       } else if (input.justPressed('KeyJ')) {
-        skater.body.velocity.y = 6;
         trickSystem.landTrick('kickflip');
         skater.playTrick('kickflip');
         audio.playOlliePop(); audio.playFlipSwoosh();
       } else if (input.justPressed('KeyK')) {
-        skater.body.velocity.y = 6;
         trickSystem.landTrick('heelflip');
         skater.playTrick('heelflip');
         audio.playOlliePop(); audio.playFlipSwoosh();
@@ -484,7 +489,7 @@ engine = new Engine({
     }
 
     // --- Air tricks ---
-    if (!skater.isGrounded) {
+    if (!trickFromGround) {
       // L = grab
       if (input.justPressed('KeyL')) {
         trickSystem.landTrick('grab');

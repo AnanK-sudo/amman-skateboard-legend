@@ -1,4 +1,5 @@
 import { Customization, PRESET_STYLES } from '@/player/Customization';
+import type { Stance } from '@/player/anim/mirror';
 
 export class CustomizeMenu {
   private overlay: HTMLDivElement;
@@ -83,6 +84,26 @@ export class CustomizeMenu {
     this.overlay.appendChild(closeBtn);
 
     document.body.appendChild(this.overlay);
+  }
+
+  /** Regular rides left foot forward, goofy right foot forward */
+  addStanceToggle(initial: Stance, onChange: (stance: Stance) => void): void {
+    let stance = initial;
+    const btn = document.createElement('button');
+    const label = () => { btn.textContent = `STANCE: ${stance.toUpperCase()}`; };
+    label();
+    btn.style.cssText = `
+      margin-top: 16px; padding: 10px 28px; font-family: Impact, sans-serif; font-size: 16px;
+      letter-spacing: 2px; cursor: pointer; border: 2px solid #ff6b35; border-radius: 4px;
+      background: transparent; color: #ff6b35;
+    `;
+    btn.addEventListener('click', () => {
+      stance = stance === 'regular' ? 'goofy' : 'regular';
+      label();
+      onChange(stance);
+    });
+    // Sits above the DONE button
+    this.overlay.insertBefore(btn, this.overlay.lastElementChild);
   }
 
   show(): void { this.overlay.style.display = 'flex'; this.visible = true; }
