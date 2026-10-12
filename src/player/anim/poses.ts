@@ -15,7 +15,7 @@ export const POSES = {
   idle: {
     hipDrop: 0.06,
     joints: {
-      spine: [4, 12, 0], spine1: [2, 8, 0], neck: [0, 12, 0], head: [4, 45, 0],
+      spine: [4, 12, 0], spine1: [2, 8, 0], neck: [0, 12, 0], head: [4, 58, 0],
       frontArm: [0, -12, -72], frontForeArm: [0, -18, 0],
       backArm: [0, 12, 74], backForeArm: [0, 18, 0],
     },
@@ -23,7 +23,7 @@ export const POSES = {
   ride: {
     hipDrop: 0.12,
     joints: {
-      hips: [6, 0, 0], spine: [10, 18, 0], spine1: [6, 10, 0], neck: [0, 14, 0], head: [-4, 48, 0],
+      hips: [6, 0, 0], spine: [10, 18, 0], spine1: [6, 10, 0], neck: [0, 14, 0], head: [-4, 58, 0],
       frontArm: [0, -24, -38], frontForeArm: [0, -24, 0],
       backArm: [0, 18, 44], backForeArm: [0, 22, 0],
     },
@@ -39,7 +39,7 @@ export const POSES = {
   brake: {
     hipDrop: 0.18,
     joints: {
-      hips: [-4, 0, 8], spine: [-6, 12, 10], spine1: [-2, 6, 0], neck: [0, 12, 0], head: [0, 50, 0],
+      hips: [-4, 0, 8], spine: [-6, 12, 10], spine1: [-2, 6, 0], neck: [0, 12, 0], head: [0, 60, 0],
       frontArm: [0, -46, -30], frontForeArm: [0, -30, 0],
       backArm: [0, 10, 30], backForeArm: [0, 20, 0],
     },
@@ -71,7 +71,7 @@ export const POSES = {
   grind: {
     hipDrop: 0.26,
     joints: {
-      hips: [10, 10, 0], spine: [14, 22, 0], spine1: [8, 8, 0], neck: [4, 12, 0], head: [8, 44, 0],
+      hips: [10, 10, 0], spine: [14, 22, 0], spine1: [8, 8, 0], neck: [4, 12, 0], head: [8, 56, 0],
       frontArm: [0, -8, -6], frontForeArm: [0, -14, 0],
       backArm: [0, 8, 8], backForeArm: [0, 14, 0],
     },
@@ -79,15 +79,15 @@ export const POSES = {
   manual: {
     hipDrop: 0.16,
     joints: {
-      hips: [-6, 0, 10], spine: [-4, 18, 12], spine1: [0, 8, 4], neck: [0, 10, 0], head: [6, 44, 0],
-      frontArm: [0, -14, 8], frontForeArm: [0, -20, 0],
-      backArm: [0, 14, -6], backForeArm: [0, 20, 0],
+      hips: [-6, 0, 5], spine: [-4, 18, 6], spine1: [0, 8, 2], neck: [0, 12, 0], head: [6, 52, 0],
+      frontArm: [0, -14, -22], frontForeArm: [0, -20, 0],
+      backArm: [0, 14, 34], backForeArm: [0, 20, 0],
     },
   },
   bail: {
     hipDrop: 0.3,
     joints: {
-      hips: [20, 0, 0], spine: [34, 0, 0], spine1: [14, 0, 0], neck: [-10, 0, 0], head: [-20, 10, 0],
+      hips: [4, 0, 0], spine: [6, 0, 0], spine1: [2, 0, 0], neck: [-14, 0, 0], head: [-24, 10, 0],
       frontArm: [0, -70, -10], frontForeArm: [0, -10, 0],
       backArm: [0, 70, 10], backForeArm: [0, 10, 0],
     },

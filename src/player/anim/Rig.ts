@@ -77,6 +77,15 @@ export class Rig {
     this.hips.bone.position.copy(this.hips.restLocalPos).y -= meters / this.root.scale.x;
   }
 
+  resetLegs(): void {
+    for (const limb of ['front', 'back'] as Limb[]) {
+      for (const n of Object.values(legBoneNames(limb, this.stance))) {
+        const b = this.bones.get(n)!;
+        b.bone.quaternion.copy(b.restLocal);
+      }
+    }
+  }
+
   legLengths(): { upper: number; lower: number } {
     const n = legBoneNames('front', this.stance);
     const up = this.bones.get(n.upper)!, lo = this.bones.get(n.lower)!, ft = this.bones.get(n.foot)!;

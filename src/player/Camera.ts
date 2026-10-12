@@ -1,8 +1,16 @@
 import * as THREE from 'three';
 
+const SWOOP_DISTANCE = 3.0;
+const SWOOP_SWING    = THREE.MathUtils.degToRad(40);
+const SWOOP_PITCH    = 0.12;
+// Exponential rates: about 0.35 s in, 0.6 s back out
+const SWOOP_IN  = 1 / 0.12;
+const SWOOP_OUT = 1 / 0.2;
+
 export class FollowCamera {
   readonly camera: THREE.PerspectiveCamera;
-  private lookOffset = new THREE.Vector3(0, 1.5, 0);
+  // Target is the body centre (0.9 m above the feet); look at hip height so the whole body is framed
+  private lookOffset = new THREE.Vector3(0, 0.1, 0);
   private smoothSpeed = 6;
   private lookSmooth = 8;
 
@@ -12,10 +20,12 @@ export class FollowCamera {
   private mouseYawOffset = 0; // temporary offset from mouse look
   private mouseDecayTimer = 0;// timer to snap back after mouse input stops
 
-  private pitch = 0.35;
-  private basePitch = 0.35;
-  private baseDistance = 6;
-  private distance = 6;
+  private pitch = 0.2;
+  private basePitch = 0.2;
+  private baseDistance = 4.2;
+  private distance = 4.2;
+  // Big-move swoop: 0 chase, 1 fully swung in
+  private moment = 0;
   private minPitch = 0.05;
   private maxPitch = 1.0;
   private currentLookTarget = new THREE.Vector3();
@@ -34,11 +44,13 @@ export class FollowCamera {
 
   getCameraYaw(): number { return this.cameraYaw; }
 
-  update(delta: number, target: THREE.Vector3, speed = 0, maxSpeed = 15, skaterYaw = 0): void {
+  /** chestSide: +1 when the rider faces the right of travel (regular), -1 for goofy */
+  update(delta: number, target: THREE.Vector3, speed = 0, maxSpeed = 15, skaterYaw = 0, moment = false, chestSide = 1): void {
     const speedRatio = Math.min(speed / maxSpeed, 1);
+    this.moment += ((moment ? 1 : 0) - this.moment) * (1 - Math.exp(-(moment ? SWOOP_IN : SWOOP_OUT) * delta));
 
-    // Auto-follow: camera wants to be behind the skater
-    this.targetYaw = skaterYaw + Math.PI; // behind = skater yaw + 180°
+    // Auto-follow: behind the skater (travel is +Z rotated by yaw), swung toward the chest on big moves
+    this.targetYaw = skaterYaw + Math.PI + SWOOP_SWING * chestSide * this.moment;
 
     // Decay mouse offset over time
     if (this.mouseDecayTimer > 0) {
@@ -48,7 +60,8 @@ export class FollowCamera {
       this.mouseYawOffset *= (1 - 3 * delta);
       if (Math.abs(this.mouseYawOffset) < 0.01) this.mouseYawOffset = 0;
       // Also ease pitch back to default
-      this.pitch += (this.basePitch - this.pitch) * 2 * delta;
+      const pitchTarget = this.basePitch + (SWOOP_PITCH - this.basePitch) * this.moment;
+      this.pitch += (pitchTarget - this.pitch) * (moment ? 6 : 2) * delta;
     }
 
     // Smooth camera yaw toward target + mouse offset
@@ -64,7 +77,8 @@ export class FollowCamera {
     this.cameraYaw += diff * (1 - Math.exp(-followRate * delta));
 
     // Distance: pull back at speed
-    const targetDist = this.baseDistance + speedRatio * 3;
+    const chaseDist  = this.baseDistance + speedRatio * 1.5;
+    const targetDist = chaseDist + (SWOOP_DISTANCE - chaseDist) * this.moment;
     this.distance += (targetDist - this.distance) * (1 - Math.exp(-3 * delta));
 
     // FOV: widen at speed

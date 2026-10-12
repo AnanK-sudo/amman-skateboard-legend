@@ -83,11 +83,12 @@ export const TRICKS: Record<Exclude<TrickAnim, 'none'>, TrickDef> = {
     cameraMoment: true,
     keys: [
       { t: 0 },
-      { t: 0.25, frontLift: 0.32, backLift: 0.3, hipDrop: 0.06, joints: { spine: [36, 0, 0], spine1: [14, 0, 0], frontArm: [0, -36, -70], frontForeArm: [0, -12, 0], head: [10, -10, 0] } },
-      { t: 0.75, frontLift: 0.32, backLift: 0.3, hipDrop: 0.06, joints: { spine: [36, 0, 0], spine1: [14, 0, 0], frontArm: [0, -36, -70], frontForeArm: [0, -12, 0], head: [10, -10, 0] } },
+      // Feet ride the board up (they follow its lift); the front hand reaches forward and down to the toe edge
+      { t: 0.25, hipDrop: 0.04, joints: { spine: [16, -10, 0], spine1: [8, 0, 0], frontArm: [0, -62, -58], frontForeArm: [0, -6, 0], head: [12, -14, 0] } },
+      { t: 0.75, hipDrop: 0.04, joints: { spine: [16, -10, 0], spine1: [8, 0, 0], frontArm: [0, -62, -58], frontForeArm: [0, -6, 0], head: [12, -14, 0] } },
       { t: 1 },
     ],
-    board: t => ({ lift: 0.26 * Math.min(1, arc(t) * 1.6), roll: -0.15 * arc(t) }),
+    board: t => ({ lift: 0.36 * Math.min(1, arc(t) * 1.6), roll: -0.15 * arc(t) }),
   },
   manual: {
     cameraMoment: false,

@@ -431,21 +431,23 @@ engine = new Engine({
     followCam.handleMouseInput(input.mouseDelta.x, input.mouseDelta.y);
     skater.update(delta, getSkaterInput());
     skaterModel.update(delta, {
-      position:   skater.position,
-      yaw:        skater.yaw,
-      speed:      skater.speed,
-      maxSpeed:   skater.maxSpeed,
-      isGrounded: skater.isGrounded,
-      isAirborne: skater.isAirborne,
-      isPushing:  skater.pushing,
-      isBailing:  skater.isBailing,
-      lean:       skater.lean,
-      shock:      skater.shock,
-      trick:      skater.trick,
+      position:      skater.position,
+      yaw:           skater.yaw,
+      speed:         skater.speed,
+      maxSpeed:      skater.maxSpeed,
+      isGrounded:    skater.isGrounded,
+      isBailing:     skater.isBailing,
+      bailProgress:  skater.bailProgress,
+      shock:         skater.shock,
+      trick:         skater.trick,
       trickProgress: skater.trickProgress,
+      pushState:     skater.pushState,
+      turn:          skater.turnInput,
+      braking:       skater.braking,
+      grinding:      grindDetector.isGrinding,
     });
     physics.step(delta);
-    followCam.update(delta, skater.position, skater.speed, skater.maxSpeed, skater.yaw);
+    followCam.update(delta, skater.position, skater.speed, skater.maxSpeed, skater.yaw, skaterModel.cameraMoment, skaterModel.chestSide);
 
     // --- Trick detection ---
     // Each trick key is standalone — auto-ollies for you

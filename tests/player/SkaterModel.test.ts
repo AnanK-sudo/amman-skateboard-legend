@@ -9,8 +9,10 @@ import { SkaterModel, SkaterAnimState } from '@/player/SkaterModel';
 
 const state: SkaterAnimState = {
   position: new THREE.Vector3(0, 0.9, 0), yaw: 0, speed: 5, maxSpeed: 15,
-  isGrounded: false, isAirborne: true, isPushing: false, isBailing: false,
-  lean: 0, shock: 0, trick: 'none', trickProgress: 0,
+  isGrounded: false, isBailing: false, bailProgress: 0, shock: 0,
+  trick: 'none', trickProgress: 0,
+  pushState: { phase: 'none', phaseT: 0, contactTravel: 0, stride: 0.6 },
+  turn: 0, braking: false, grinding: false,
 };
 
 function make(): SkaterModel {
@@ -44,3 +46,31 @@ describe('SkaterModel tricks (the visible character)', () => {
     expect(model.group.getObjectByName('trickPivot')!.rotation.y).toBe(0);
   });
 });
+
+describe('SkaterModel stance', () => {
+  it('turns the body sideways: regular faces the right of travel, goofy the left', () => {
+    const model = make();
+    const root = model.group.getObjectByName('stanceRoot')!;
+    expect(root.rotation.y).toBeCloseTo(-Math.PI / 2);
+    model.setStance('goofy');
+    expect(root.rotation.y).toBeCloseTo(Math.PI / 2);
+    expect(model.chestSide).toBe(-1);
+  });
+
+  it('mirrors board flips for goofy', () => {
+    const model = make();
+    model.setStance('goofy');
+    model.update(1 / 60, { ...state, trick: 'kickflip', trickProgress: 0.5 });
+    expect(model.group.getObjectByName('boardFlip')!.rotation.x).toBeCloseTo(-Math.PI, 1);
+  });
+
+  it('runs before the character model has loaded and reports big moves to the camera', () => {
+    const model = make();
+    expect(model.loaded).toBe(false);
+    model.update(1 / 60, { ...state, trick: 'kickflip', trickProgress: 0.2 });
+    expect(model.cameraMoment).toBe(true);
+    model.update(1 / 60, { ...state, isGrounded: true, speed: 8 });
+    expect(model.cameraMoment).toBe(false);
+  });
+});
+

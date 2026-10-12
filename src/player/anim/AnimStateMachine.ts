@@ -173,8 +173,8 @@ export class AnimStateMachine {
 
 /** Falls forward to lying flat, stays down, then rises; matches the skater's bail phases */
 function bailPitch(p: number): number {
-  const FALL = 0.23, DOWN = 0.67;
-  if (p < FALL) return (p / FALL) * 1.3;
-  if (p < DOWN) return 1.3;
-  return 1.3 * (1 - (p - DOWN) / (1 - DOWN));
+  const FALL = 0.23, DOWN = 0.67, FLAT = 1.4;
+  if (p < FALL) return (p / FALL) * FLAT;
+  if (p < DOWN) return FLAT;
+  return FLAT * (1 - (p - DOWN) / (1 - DOWN));
 }
