@@ -46,3 +46,35 @@ describe('FollowCamera', () => {
     expect(Math.abs(cam.camera.position.x)).toBeLessThan(0.1);
   });
 });
+
+describe('FollowCamera input and modes', () => {
+  it('ignores the mouse unless free-look is held', () => {
+    const a = new FollowCamera(1.5), b = new FollowCamera(1.5);
+    run(a, 2, false);
+    run(b, 2, false);
+    b.freeLook(false, 400, 200);
+    run(a, 0.5, false);
+    run(b, 0.5, false);
+    expect(b.camera.position.distanceTo(a.camera.position)).toBeLessThan(1e-6);
+  });
+
+  it('looks around while held, then eases back over about a second', () => {
+    const cam = new FollowCamera(1.5);
+    run(cam, 3, false);
+    const rest = cam.camera.position.clone();
+    cam.freeLook(true, 400, 0);
+    run(cam, 0.1, false);
+    expect(cam.camera.position.distanceTo(rest)).toBeGreaterThan(1);
+    cam.freeLook(false, 0, 0);
+    run(cam, 0.3, false);
+    expect(cam.camera.position.distanceTo(rest)).toBeGreaterThan(0.3);
+    run(cam, 1.5, false);
+    expect(cam.camera.position.distanceTo(rest)).toBeLessThan(0.1);
+  });
+
+  it('follows a walker from 3.5 m', () => {
+    const cam = new FollowCamera(1.5);
+    for (let t = 0; t < 4; t += 1 / 60) cam.update(1 / 60, target, 0, 15, 0, false, 1, 'walk');
+    expect(horizontalDistance(cam)).toBeCloseTo(3.5 * Math.cos(0.2), 1);
+  });
+});

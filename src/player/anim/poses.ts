@@ -28,12 +28,13 @@ export const POSES = {
       backArm: [0, 18, 44], backForeArm: [0, 22, 0],
     },
   },
+  // The whole body is already turned 65 degrees toward travel by bodyYaw, so the spine stays nearly square
   push: {
     hipDrop: 0.2,
     joints: {
-      hips: [10, 20, -6], spine: [16, 30, -6], spine1: [8, 14, 0], neck: [0, 10, 0], head: [-6, 30, 0],
-      frontArm: [0, -34, -58], frontForeArm: [0, -30, 0],
-      backArm: [0, 24, 62], backForeArm: [0, 26, 0],
+      hips: [10, 0, -4], spine: [16, 4, -4], spine1: [8, 2, 0], neck: [0, 4, 0], head: [-8, 8, 0],
+      frontArm: [0, -20, -66], frontForeArm: [0, -26, 0],
+      backArm: [0, 20, 66], backForeArm: [0, 26, 0],
     },
   },
   brake: {
@@ -90,6 +91,31 @@ export const POSES = {
       hips: [4, 0, 0], spine: [6, 0, 0], spine1: [2, 0, 0], neck: [-14, 0, 0], head: [-24, 10, 0],
       frontArm: [0, -70, -10], frontForeArm: [0, -10, 0],
       backArm: [0, 70, 10], backForeArm: [0, 10, 0],
+    },
+  },
+  charge: {
+    hipDrop: 0.32,
+    joints: {
+      hips: [14, 0, 0], spine: [22, 18, 0], spine1: [10, 8, 0], neck: [0, 12, 0], head: [-6, 50, 0],
+      frontArm: [0, -18, -52], frontForeArm: [0, -28, 0],
+      backArm: [0, 16, 54], backForeArm: [0, 28, 0],
+    },
+  },
+  // Walking faces the way it goes (no stance turn): upright, arms down
+  walk: {
+    hipDrop: 0.03,
+    joints: {
+      spine: [4, 0, 0], spine1: [2, 0, 0], head: [2, 0, 0],
+      frontArm: [0, 0, -76], frontForeArm: [0, -12, 0],
+      backArm: [0, 0, 76], backForeArm: [0, 12, 0],
+    },
+  },
+  mount: {
+    hipDrop: 0.2,
+    joints: {
+      hips: [10, 0, 0], spine: [14, 10, 0], spine1: [6, 4, 0], head: [6, 30, 0],
+      frontArm: [0, -14, -40], frontForeArm: [0, -20, 0],
+      backArm: [0, 14, 44], backForeArm: [0, 20, 0],
     },
   },
 } satisfies Record<string, BasePose>;

@@ -3,8 +3,9 @@ import { AnimStateMachine, type AnimInput } from '@/player/anim/AnimStateMachine
 import { boneName, mirrorPose, type JointPose } from '@/player/anim/mirror';
 
 const base: AnimInput = {
-  speed: 0, maxSpeed: 15, grounded: true, pushPhase: 'none', turn: 0, braking: false,
-  grinding: false, bailing: false, bailProgress: 0, trick: 'none', trickProgress: 0, shock: 0, stance: 'regular',
+  mode: 'riding', speed: 0, maxSpeed: 15, grounded: true, pushPhase: 'none', turn: 0, braking: false,
+  grinding: false, grindType: null, bailReason: null, bailProgress: 0, mountProgress: 0, walkSpeed: 0, stridePhase: 0,
+  trick: 'none', trickProgress: 0, shock: 0, crouch: 0, manualBalance: null, stance: 'regular',
 };
 
 function settle(input: Partial<AnimInput>, frames = 60, m = new AnimStateMachine()) {
@@ -22,8 +23,12 @@ describe('AnimStateMachine states', () => {
     ['brake', { speed: 8, braking: true }],
     ['air', { speed: 8, grounded: false }],
     ['grind', { speed: 8, grinding: true }],
-    ['manual', { speed: 8, trick: 'manual', trickProgress: 0.5 }],
-    ['bail', { bailing: true, bailProgress: 0.3 }],
+    ['manual', { speed: 8, trick: 'manual', trickProgress: 0.5, manualBalance: 0 }],
+    ['charge', { crouch: 1 }],
+    ['bail', { mode: 'bailing', bailReason: 'unfinished', bailProgress: 0.3 }],
+    ['getup', { mode: 'bailing', bailReason: 'unfinished', bailProgress: 0.8 }],
+    ['walk', { mode: 'walking', walkSpeed: 1.6 }],
+    ['mount', { mode: 'mounting', mountProgress: 0.3 }],
   ];
   for (const [state, input] of cases) {
     it(`picks ${state}`, () => expect(settle(input).state).toBe(state));
@@ -68,20 +73,16 @@ describe('AnimStateMachine tricks', () => {
     expect(f.backLift).toBeGreaterThan(0.1);
   });
 
-  it('spins the body during a spin', () => {
-    const m = new AnimStateMachine();
-    expect(m.update(1 / 60, { ...base, grounded: false, trick: 'spin', trickProgress: 0.5 }).spin).toBeCloseTo(0.5, 1);
-  });
 
-  it('reaches the front hand down during a grab', () => {
-    const f = settle({ grounded: false, trick: 'grab', trickProgress: 0.5 }, 30);
+  it('reaches the front hand down during a nosegrab', () => {
+    const f = settle({ grounded: false, trick: 'nosegrab', trickProgress: 0.5 }, 30);
     const air = settle({ grounded: false }, 30);
     expect(f.joints.frontArm![2]).toBeLessThan(air.joints.frontArm![2] - 30);
   });
 
   it('only frames big moves for the cinematic camera', () => {
     const moment = (input: Partial<AnimInput>) => new AnimStateMachine().update(1 / 60, { ...base, ...input }).cameraMoment;
-    for (const trick of ['kickflip', 'heelflip', 'tre_flip', 'spin', 'grab'] as const) {
+    for (const trick of ['kickflip', 'heelflip', 'tre_flip', 'impossible', 'indy', 'stalefish'] as const) {
       expect(moment({ grounded: false, trick, trickProgress: 0.3 })).toBe(true);
     }
     expect(moment({ grinding: true, speed: 5 })).toBe(true);
@@ -113,3 +114,64 @@ describe('Stance mirroring', () => {
     }
   });
 });
+
+describe('Push stance', () => {
+  it('turns the body 65 degrees toward travel and the front foot to the nose while pushing', () => {
+    const f = settle({ speed: 3, pushPhase: 'contact' });
+    expect(f.bodyYaw).toBeCloseTo(65 * Math.PI / 180, 2);
+    expect(f.frontFootYaw).toBeCloseTo(25 * Math.PI / 180, 2);
+  });
+
+  it('pivots back to sideways after the last stroke in about 0.3 s', () => {
+    const m = new AnimStateMachine();
+    settle({ speed: 3, pushPhase: 'contact' }, 60, m);
+    const f = settle({ speed: 5 }, 25, m);
+    expect(f.bodyYaw).toBeLessThan(0.25 * 65 * Math.PI / 180);
+  });
+});
+
+describe('Walking, bails and mounting', () => {
+  it('faces the way it walks and swings the arms with the stride', () => {
+    const a = settle({ mode: 'walking', walkSpeed: 1.6, stridePhase: Math.PI / 2 });
+    const b = settle({ mode: 'walking', walkSpeed: 1.6, stridePhase: -Math.PI / 2 });
+    expect(a.stand).toBeLessThan(0.05);
+    expect(Math.sign(a.joints.frontArm![1])).toBe(-Math.sign(b.joints.frontArm![1]));
+  });
+
+  it('falls forward for an unfinished trick and sideways for a crooked landing', () => {
+    const slam = settle({ mode: 'bailing', bailReason: 'unfinished', bailProgress: 0.4 }, 5);
+    const tumble = settle({ mode: 'bailing', bailReason: 'crooked', bailProgress: 0.4 }, 5);
+    expect(slam.pivotPitch).toBeGreaterThan(1.2);
+    expect(Math.abs(slam.pivotRoll)).toBe(0);
+    expect(tumble.pivotRoll).toBeGreaterThan(1);
+  });
+
+  it('turns from facing forward to the riding stance through the hop on', () => {
+    expect(settle({ mode: 'mounting', mountProgress: 0.1 }, 1).stand).toBeCloseTo(0.1, 5);
+    expect(settle({ mode: 'mounting', mountProgress: 0.9 }, 1).stand).toBeCloseTo(0.9, 5);
+  });
+});
+
+describe('Flip and grind board motion', () => {
+  const cases: [string, number, number, number][] = [
+    ['kickflip', 1, 0, 0], ['heelflip', -1, 0, 0], ['pop_shove_it', 0, 0.5, 0], ['shove_it_360', 0, 1, 0],
+    ['varial_flip', 1, 0.5, 0], ['tre_flip', 1, 1, 0], ['hardflip', 1, -0.5, 0], ['impossible', 0, 0, 1],
+  ];
+  for (const [id, flip, shove, wrap] of cases) {
+    it(`${id} completes its rotation by the catch`, () => {
+      const b = new AnimStateMachine().update(1 / 60, { ...base, grounded: false, trick: id, trickProgress: 0.85 }).board;
+      expect(b.flip).toBeCloseTo(flip, 5);
+      expect(b.shove).toBeCloseTo(shove, 5);
+      expect(b.wrap).toBeCloseTo(wrap, 5);
+    });
+  }
+
+  it('sets a distinct board angle per grind', () => {
+    const at = (grindType: string) => new AnimStateMachine().update(1 / 60, { ...base, speed: 8, grinding: true, grindType });
+    expect(at('boardslide').grindYaw).toBeCloseTo(0.25);
+    expect(at('nosegrind').board.pitch).toBeLessThan(-0.1);
+    expect(at('five_o').board.pitch).toBeGreaterThan(0.1);
+    expect(at('smith').board.roll).toBeGreaterThan(0.2);
+  });
+});
+

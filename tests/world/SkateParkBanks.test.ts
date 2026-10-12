@@ -5,8 +5,7 @@ import { SkatePark } from '@/world/zones/SkatePark';
 import { Skater, SkaterInput } from '@/player/Skater';
 
 const input: SkaterInput = {
-  forward: true, backward: false, left: false, right: false, ollie: false, trick1: false,
-  trick2: false, grind: false, grab: false, manual: false, cameraYaw: 0,
+  forward: true, backward: false, left: false, right: false, ollieHeld: false, spinLeft: false, spinRight: false,
 };
 
 function park(): CANNON.World {

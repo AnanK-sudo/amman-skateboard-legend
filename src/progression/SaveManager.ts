@@ -11,6 +11,7 @@ export interface GameSave {
   equippedBoard: string;
   equippedOutfit: string;
   stance: Stance;
+  bestCombo: number;
 }
 
 const DEFAULT_SAVE: GameSave = {
@@ -22,6 +23,7 @@ const DEFAULT_SAVE: GameSave = {
   equippedBoard: 'default',
   equippedOutfit: 'default',
   stance: 'regular',
+  bestCombo: 0,
 };
 
 export class SaveManager {

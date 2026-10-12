@@ -23,6 +23,7 @@ describe('SaveManager', () => {
       equippedBoard: 'graffiti',
       equippedOutfit: 'hoodie',
       stance: 'goofy',
+      bestCombo: 0,
     };
     SaveManager.save(save);
     const loaded = SaveManager.load();

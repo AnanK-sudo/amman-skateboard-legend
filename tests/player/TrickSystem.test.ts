@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { TrickSystem, TrickName } from '@/player/TrickSystem';
+import { TrickSystem } from '@/player/TrickSystem';
+
+const air = (over: Partial<{ airTricks: string[]; halfTurns: number; grabTicks: number; ollied: boolean }> = {}) =>
+  ({ airTricks: [], halfTurns: 0, grabTicks: 0, ollied: false, ...over });
 
 describe('TrickSystem', () => {
   let tricks: TrickSystem;
-
-  beforeEach(() => {
-    tricks = new TrickSystem();
-  });
+  beforeEach(() => { tricks = new TrickSystem(); });
 
   it('starts with no active combo', () => {
     expect(tricks.comboActive).toBe(false);
@@ -14,94 +14,73 @@ describe('TrickSystem', () => {
     expect(tricks.comboMultiplier).toBe(0);
   });
 
-  it('landing a trick starts a combo', () => {
-    tricks.landTrick('kickflip');
-    expect(tricks.comboActive).toBe(true);
-    expect(tricks.comboMultiplier).toBe(1);
-    expect(tricks.comboScore).toBe(200);
-  });
-
-  it('chaining tricks increases multiplier', () => {
+  it('chains tricks with a growing multiplier', () => {
     tricks.landTrick('kickflip');
     tricks.landTrick('fifty_fifty');
     expect(tricks.comboMultiplier).toBe(2);
-    expect(tricks.comboScore).toBe(1400);
+    expect(tricks.comboScore).toBe((200 + 500) * 2);
+    expect(tricks.comboChain).toEqual(['Kickflip', '50-50']);
   });
 
-  it('rejects duplicate tricks in same combo', () => {
+  it('scores a repeated trick at half each time instead of rejecting it', () => {
     tricks.landTrick('kickflip');
-    const result = tricks.landTrick('kickflip');
-    expect(result).toBe(false);
-    expect(tricks.comboMultiplier).toBe(1);
+    expect(tricks.landTrick('kickflip').points).toBe(100);
+    expect(tricks.landTrick('kickflip').points).toBe(50);
+    expect(tricks.comboMultiplier).toBe(3);
   });
 
-  it('bail resets combo and returns 0', () => {
+  it('bail and cash out reset the combo', () => {
     tricks.landTrick('kickflip');
-    tricks.landTrick('fifty_fifty');
-    const score = tricks.bail();
-    expect(score).toBe(0);
+    expect(tricks.bail()).toBe(0);
     expect(tricks.comboActive).toBe(false);
-    expect(tricks.comboScore).toBe(0);
-  });
-
-  it('cash out returns final score and resets', () => {
-    tricks.landTrick('kickflip');
-    tricks.landTrick('fifty_fifty');
-    const score = tricks.cashOut();
-    expect(score).toBe(1400);
-    expect(tricks.comboActive).toBe(false);
-    expect(tricks.comboScore).toBe(0);
-  });
-
-  it('combo chain list tracks trick names', () => {
     tricks.landTrick('kickflip');
     tricks.landTrick('nosegrind');
-    expect(tricks.comboChain).toEqual(['kickflip', 'nosegrind']);
+    expect(tricks.cashOut()).toBe((200 + 600) * 2);
+    expect(tricks.comboScore).toBe(0);
   });
 
-  it('all defined tricks have base scores', () => {
-    const allTricks: TrickName[] = [
-      'ollie', 'kickflip', 'heelflip', 'tre_flip',
-      'fifty_fifty', 'nosegrind', 'tailslide', 'boardslide',
-      'grab', 'spin_180', 'spin_360', 'spin_540', 'manual',
-    ];
-    for (const name of allTricks) {
-      expect(tricks.getBaseScore(name)).toBeGreaterThan(0);
+  it('every catalog trick has a base score', () => {
+    for (const id of ['ollie', 'kickflip', 'impossible', 'hardflip', 'tre_flip', 'indy', 'stalefish', 'smith', 'nose_manual', 'spin_540']) {
+      expect(tricks.getBaseScore(id)).toBeGreaterThan(0);
     }
   });
+});
 
-  // --- consumeLastTrick ---
+describe('TrickSystem air landings', () => {
+  let tricks: TrickSystem;
+  beforeEach(() => { tricks = new TrickSystem(); });
 
-  it('consumeLastTrick returns the trick name and clears it', () => {
-    tricks.landTrick('kickflip');
-    expect(tricks.consumeLastTrick()).toBe('kickflip');
-    expect(tricks.consumeLastTrick()).toBeNull(); // cleared — second call returns null
+  it('names and multiplies a flip combined with a spin', () => {
+    const [t] = tricks.landAir(air({ airTricks: ['varial_flip'], halfTurns: 2 }), false);
+    expect(t.name).toBe('360 Varial Flip');
+    expect(t.points).toBe(300 * 2);
+    expect(t.ids).toEqual(['varial_flip', 'spin_360']);
   });
 
-  it('consumeLastTrick returns null before any trick is landed', () => {
-    expect(tricks.consumeLastTrick()).toBeNull();
+  it('prefixes fakie', () => {
+    const [t] = tricks.landAir(air({ airTricks: ['melon'], halfTurns: -1 }), true);
+    expect(t.name).toBe('Fakie 180 Melon');
   });
 
-  it('consumeLastTrick is null after bail', () => {
-    tricks.landTrick('ollie');
-    tricks.bail();
-    expect(tricks.consumeLastTrick()).toBeNull();
+  it('adds held grab ticks to the grab', () => {
+    const [t] = tricks.landAir(air({ airTricks: ['indy'], grabTicks: 6 }), false);
+    expect(t.points).toBe(200 + 6 * 50);
   });
 
-  it('consumeLastTrick is null after cashOut', () => {
-    tricks.landTrick('ollie');
-    tricks.cashOut();
-    expect(tricks.consumeLastTrick()).toBeNull();
+  it('scores a spin on its own when nothing else was thrown', () => {
+    const [t] = tricks.landAir(air({ halfTurns: 3, ollied: true }), false);
+    expect(t.ids).toEqual(['spin_540']);
+    expect(t.points).toBe(600);
   });
 
-  it('calling consumeLastTrick twice does not double-count tricks in challenge scenario', () => {
-    // Simulate the game loop calling consumeLastTrick every frame
-    tricks.landTrick('ollie');
-    const first = tricks.consumeLastTrick();
-    const second = tricks.consumeLastTrick();
-    const third = tricks.consumeLastTrick();
-    expect(first).toBe('ollie');
-    expect(second).toBeNull();
-    expect(third).toBeNull();
+  it('scores a plain ollie only when nothing else happened', () => {
+    expect(tricks.landAir(air({ ollied: true }), false).map(t => t.ids[0])).toEqual(['ollie']);
+    expect(tricks.landAir(air(), false)).toEqual([]);
+  });
+
+  it('hands landed tricks to challenges once', () => {
+    tricks.landAir(air({ airTricks: ['kickflip'], halfTurns: 2 }), false);
+    expect(tricks.consumeLanded().flatMap(t => t.ids)).toEqual(['kickflip', 'spin_360']);
+    expect(tricks.consumeLanded()).toEqual([]);
   });
 });

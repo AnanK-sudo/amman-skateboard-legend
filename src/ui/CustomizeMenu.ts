@@ -1,5 +1,6 @@
 import { Customization, PRESET_STYLES } from '@/player/Customization';
 import type { Stance } from '@/player/anim/mirror';
+import type { DeckDef } from '@/world/decks';
 
 export class CustomizeMenu {
   private overlay: HTMLDivElement;
@@ -84,6 +85,44 @@ export class CustomizeMenu {
     this.overlay.appendChild(closeBtn);
 
     document.body.appendChild(this.overlay);
+  }
+
+  private deckRow: HTMLDivElement | null = null;
+  private deckState: { decks: DeckDef[]; owned: () => string[]; equipped: string; onPick: (id: string) => void } | null = null;
+
+  /** Deck picker: locked decks show how to earn them and cannot be picked */
+  addDeckRow(decks: DeckDef[], owned: () => string[], equipped: string, onPick: (id: string) => void): void {
+    this.deckState = { decks, owned, equipped, onPick };
+    this.deckRow = document.createElement('div');
+    this.deckRow.style.cssText = `display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; max-width: 620px; margin-top: 14px;`;
+    this.overlay.insertBefore(this.deckRow, this.overlay.lastElementChild);
+    this.refreshDecks();
+  }
+
+  refreshDecks(): void {
+    if (!this.deckRow || !this.deckState) return;
+    const st = this.deckState;
+    this.deckRow.replaceChildren();
+    for (const d of st.decks) {
+      const unlocked = st.owned().includes(d.id);
+      const btn = document.createElement('button');
+      btn.textContent = unlocked ? d.name.toUpperCase() : `LOCKED: ${d.hint}`;
+      btn.disabled = !unlocked;
+      const active = d.id === st.equipped;
+      btn.style.cssText = `
+        padding: 8px 14px; font-family: Impact, sans-serif; font-size: 13px; letter-spacing: 1px;
+        border-radius: 4px; cursor: ${unlocked ? 'pointer' : 'not-allowed'};
+        border: 2px solid ${active ? '#3fb950' : unlocked ? '#ff6b35' : '#444'};
+        background: ${active ? '#3fb950' : 'transparent'}; color: ${active ? '#0d0d0d' : unlocked ? '#ff6b35' : '#666'};
+      `;
+      btn.addEventListener('click', () => {
+        if (!unlocked) return;
+        st.equipped = d.id;
+        st.onPick(d.id);
+        this.refreshDecks();
+      });
+      this.deckRow.appendChild(btn);
+    }
   }
 
   /** Regular rides left foot forward, goofy right foot forward */

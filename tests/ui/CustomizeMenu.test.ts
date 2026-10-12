@@ -16,3 +16,16 @@ describe('CustomizeMenu stance toggle', () => {
     expect(changes).toEqual(['goofy', 'regular']);
   });
 });
+
+describe('CustomizeMenu deck row', () => {
+  it('lets you pick owned decks and refuses locked ones', async () => {
+    const { DECKS } = await import('@/world/decks');
+    const menu = new CustomizeMenu(new Customization(), () => {});
+    const picks: string[] = [];
+    menu.addDeckRow(DECKS, () => ['default', 'citadel'], 'default', id => picks.push(id));
+    const buttons = [...document.querySelectorAll('button')];
+    buttons.find(b => b.textContent === 'CITADEL')!.click();
+    buttons.find(b => b.textContent?.startsWith('LOCKED: Cash a 1500'))!.click();
+    expect(picks).toEqual(['citadel']);
+  });
+});

@@ -1,3 +1,5 @@
+import { TRICK_LIST, type Dir, type Family } from '@/player/tricks/catalog';
+
 export class TrickListOverlay {
   private overlay: HTMLDivElement;
   private visible = false;
@@ -16,19 +18,19 @@ export class TrickListOverlay {
     title.style.cssText = `font-size: 36px; color: #ff6b35; letter-spacing: 4px; margin-bottom: 24px;`;
     this.overlay.appendChild(title);
 
-    const tricks = [
-      ['Space', 'Ollie', '50'],
-      ['J', 'Kickflip', '200'],
-      ['K', 'Heelflip', '200'],
-      ['J + K', 'Tre Flip', '400'],
-      ['Shift', 'Manual', '100'],
-      ['F (near rail)', '50-50 Grind', '500'],
-      ['L (in air)', 'Grab', '300'],
-      ['A/D (in air)', 'Spin', '250-600'],
+    const BUTTON: Partial<Record<Family, string>> = { flip: 'J', grab: 'L (air, hold)', grind: 'F (rail)', manual: 'Shift' };
+    const dirLabel = (d?: Dir) => (!d || d === 'none' ? '' : ` + ${d.split('').join('+')}`);
+    const tricks: string[][] = [
+      ['Space (hold, release)', 'Ollie', '50'],
+      ...TRICK_LIST.filter(t => BUTTON[t.family]).map(t => [`${BUTTON[t.family]}${dirLabel(t.dir)}`, t.name, String(t.score)]),
+      ['Q / E (air)', 'Spin 180 / 360 / 540', 'x1.5 / x2 / x3'],
+      ['Hold Space landing', 'Absorb a big drop', ''],
+      ['E (on foot)', 'Hop back on', ''],
+      ['Right mouse', 'Look around', ''],
     ];
 
     const table = document.createElement('div');
-    table.style.cssText = `display: grid; grid-template-columns: 120px 150px 80px; gap: 8px 16px; text-align: left;`;
+    table.style.cssText = `display: grid; grid-template-columns: 170px 170px 110px; gap: 6px 16px; text-align: left; max-height: 70vh; overflow-y: auto; padding-right: 8px;`;
 
     // Header
     for (const h of ['KEY', 'TRICK', 'POINTS']) {

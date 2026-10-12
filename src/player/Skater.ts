@@ -1,125 +1,103 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
 import { PushCycle, type PushPhase } from './anim/PushCycle';
+import { RIDER_PROBE, STEP_HEIGHT, groundHit, resolveWalls } from './physicsRays';
+import { TRICKS } from './tricks/catalog';
+import { ManualBalance } from './tricks/ManualBalance';
+import type { LandingSnapshot } from './LandingJudge';
 
 export interface SkaterInput {
   forward: boolean;
   backward: boolean;
   left: boolean;
   right: boolean;
-  ollie: boolean;
-  trick1: boolean;
-  trick2: boolean;
-  grind: boolean;
-  grab: boolean;
-  manual: boolean;
-  cameraYaw: number;
+  /** Space held: crouch, charge the ollie, absorb a drop */
+  ollieHeld: boolean;
+  spinLeft: boolean;
+  spinRight: boolean;
 }
 
-export type TrickAnim = 'none' | 'kickflip' | 'heelflip' | 'tre_flip' | 'ollie' | 'manual' | 'grab' | 'spin';
+/** A trick id from the catalog, or none */
+export type TrickAnim = string;
 
-const BAIL_FALL   = 0.35;
-const BAIL_GROUND = 0.65;
-const BAIL_GETUP  = 0.50;
-const BAIL_TOTAL  = BAIL_FALL + BAIL_GROUND + BAIL_GETUP;
+export interface LandingEvent {
+  snapshot: LandingSnapshot;
+  /** Flip and grab ids thrown during the air, in order */
+  airTricks: string[];
+  /** Signed half turns of spin, rounded */
+  halfTurns: number;
+  /** Tenths of a second spent holding grabs */
+  grabTicks: number;
+  /** True when the air started with a plain ollie */
+  ollied: boolean;
+}
 
-const GRAVITY = 9.82;
-const MANUAL_DURATION = 0.6;
-const BODY_RADIUS = 0.3;
-// Anything taller than this needs an ollie; curbs, stair steps (0.18) and bank-to-box lips roll over
-const STEP_HEIGHT = 0.3;
-const WALL_RAY_HEIGHTS = [STEP_HEIGHT + 0.02, 0.9, 1.6];
-const WALL_RAY_SIDES = [-1, -0.5, 0, 0.5, 1];
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Real-skater stance breakdown:
-//   • Feet / board:   fully sideways   (stanceGroup Y = +90°)
-//   • Lower body:     mostly sideways  (lowerGroup  Y =   0° offset from stance)
-//   • Torso / arms:   open ~45° fwd   (upperGroup  Y = -50° from stance → net +40°)
-//   • Head:           nearly forward   (head        Y = -30° extra  → net +10°)
-// This means you can see where you're going while your feet ride sideways.
-// ─────────────────────────────────────────────────────────────────────────────
+const GRAVITY = 9.82 * 2;
+const HALF_HEIGHT = 0.9;
+const AIRBORNE_THRESHOLD = 0.3;
+const OLLIE_MIN = 5;
+const OLLIE_MAX = 7.5;
+const OLLIE_CHARGE = 0.4;
+const FLIP_POP = 6;
+const SPIN_RATE = THREE.MathUtils.degToRad(540);
+const GRAB_IN = 0.12;
+const MANUAL_MIN_SPEED = 0.5;
 
 export class Skater {
   readonly body: CANNON.Body;
-  readonly mesh: THREE.Group;
+  readonly maxSpeed = 15;
 
-  private stanceGroup: THREE.Group;   // +90° Y — feet face perpendicular to travel
-  private innerGroup:  THREE.Group;   // lean / tilt / trick animations live here
-  private lowerGroup:  THREE.Group;   // legs + board (fully sideways)
-  private upperGroup:  THREE.Group;   // torso / arms / head (opened toward front)
+  private world: CANNON.World;
+  // Forward is +Z rotated by yaw, matching the model and the camera. PI heads toward -Z, where the zones were built.
+  private _yaw = Math.PI;
+  private _speed = 0;
+  private _turnInput = 0;
+  private _braking = false;
+  private pushThrust = 28;   // only while the push foot is on the ground
+  private brakeForce = 15;
+  private turnSpeed = 2.5;
+  private push = new PushCycle();
+  private isPushing = false;
 
-  private boardGroup: THREE.Group;
-  private pelvisGroup: THREE.Group;
+  private groundY = 0;
+  private verticalVel = 0;
+  private airborne = false;
+  private landingShock = 0;
+  private peakFeetY = 0;
 
-  // Articulated legs: hip → thigh → knee → shin → ankle → foot
-  private leftHip:   THREE.Group;
-  private rightHip:  THREE.Group;
-  private leftKnee:  THREE.Group;
-  private rightKnee: THREE.Group;
-  private leftAnkle: THREE.Group;
-  private rightAnkle:THREE.Group;
+  private charge = 0;
+  private wasOllieHeld = false;
+  private _crouched = false;
 
-  private leftThigh:  THREE.Mesh;
-  private rightThigh: THREE.Mesh;
-  private leftShin:   THREE.Mesh;
-  private rightShin:  THREE.Mesh;
-  private leftFoot:   THREE.Mesh;
-  private rightFoot:  THREE.Mesh;
+  // Air bookkeeping
+  private _spinAngle = 0;
+  private airTricks: string[] = [];
+  private ollied = false;
+  private grabTicksTotal = 0;
 
-  private torso: THREE.Mesh;
-  private head:  THREE.Mesh;
-  private leftArm:  THREE.Mesh;
-  private rightArm: THREE.Mesh;
+  // Animation-facing trick state
+  private flipId: string | null = null;
+  private flipTimer = 0;
+  private flipDuration = 0.5;
+  private ollieTimer = -1;
+  private ollieDuration = 0.5;
+  private grabId: string | null = null;
+  private grabHeldNow = false;
+  private grabTimer = 0;
+  private grabReleaseTimer = -1;
+  private manualId: string | null = null;
+  private balance = new ManualBalance();
+  private _fakie = false;
+  private _grindType: string | null = null;
 
-  private wheels: THREE.Mesh[] = [];
-
-  // Bail
-  private _isBailing  = false;
-  private bailTimer   = 0;
-  private bailBoardX  = 0;
-
-  // Movement. Forward is +Z rotated by yaw, matching the Mixamo model and the follow camera.
-  // Starting at PI heads toward -Z, where the zone layouts were built.
-  private _yaw        = Math.PI;
-  private _turnInput  = 0;
-  private _braking    = false;
-  private _speed      = 0;
-  readonly maxSpeed   = 15;
-  private pushThrust  = 28;   // only while the push foot is on the ground
-  private push        = new PushCycle();
-  private brakeForce  = 15;
-  private turnSpeed   = 2.5;
-  private ollieImpulse = 6;
-
-  // Trick
-  private trickAnim:     TrickAnim = 'none';
-  private trickTimer     = 0;
-  private trickDuration  = 0.4;
-
-  // Animation state
-  private animTime    = 0;
-  private currentLean = 0;
-  private currentTilt = 0;
-  private pushPhase   = 0;
-  private isPushing   = false;
-  private pumpAmount  = 0;       // bowl pump: positive = extend, negative = crouch
-  private landingShock = 0;     // 0–1, peaks at landing, decays fast
-  private prevGroundY  = 0;
-
-  // Physics
-  private readonly HALF_HEIGHT        = 0.9;
-  private readonly AIRBORNE_THRESHOLD = 0.3;
-  private world:       CANNON.World;
-  private groundY:     number = 0;
-  private verticalVel: number = 0;
-  private airborne:    boolean = false;
+  private pendingLanding: LandingEvent | null = null;
+  private pendingWallHit: { before: number; after: number } | null = null;
+  private manualFailed = false;
 
   private _positionVec = new THREE.Vector3();
 
   constructor(world: CANNON.World, spawn?: { x: number; y: number; z: number }) {
     this.world = world;
-
     this.body = new CANNON.Body({
       type: CANNON.Body.KINEMATIC,
       shape: new CANNON.Box(new CANNON.Vec3(0.3, 0.9, 0.15)),
@@ -130,699 +108,302 @@ export class Skater {
       collisionFilterMask: 1,
     });
     world.addBody(this.body);
-
-    this.mesh = new THREE.Group();
-
-    // ── Stance layer — starts front-facing (0); dynamic in update ─────────
-    this.stanceGroup = new THREE.Group();
-    this.stanceGroup.rotation.y = 0;
-    this.mesh.add(this.stanceGroup);
-
-    // ── Animation layer ────────────────────────────────────────────────────
-    this.innerGroup = new THREE.Group();
-    this.stanceGroup.add(this.innerGroup);
-
-    // ── Lower body (legs + board, remain fully sideways) ──────────────────
-    this.lowerGroup = new THREE.Group();
-    this.innerGroup.add(this.lowerGroup);
-
-    // ── Upper body — rotation kept near-forward in world space by update ──
-    this.upperGroup = new THREE.Group();
-    this.upperGroup.rotation.y = -Math.PI * 0.05; // near-forward when stance=0
-    this.innerGroup.add(this.upperGroup);
-
-    // ── Materials ──────────────────────────────────────────────────────────
-    const skinMat  = new THREE.MeshStandardMaterial({ color: 0xffb088 });
-    const shirtMat = new THREE.MeshStandardMaterial({ color: 0xff6b35 });
-    const pantsMat = new THREE.MeshStandardMaterial({ color: 0x1a1a3e });
-    const capMat   = new THREE.MeshStandardMaterial({ color: 0x222222 });
-    const shoeMat  = new THREE.MeshStandardMaterial({ color: 0x111111 });
-    const truckMat = new THREE.MeshStandardMaterial({ color: 0x999999, metalness: 0.7, roughness: 0.3 });
-    const wheelMat = new THREE.MeshStandardMaterial({ color: 0xeeeeee, roughness: 0.5 });
-
-    // ══════════════════════════════════════════════════════════════════════
-    // UPPER BODY
-    // ══════════════════════════════════════════════════════════════════════
-
-    // Torso
-    // Torso reaches down far enough to overlap the pelvis bridge
-    this.torso = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.96, 0.26), shirtMat);
-    this.torso.position.y = 1.22;
-    this.torso.castShadow = true;
-    this.upperGroup.add(this.torso);
-
-    // Head — extra Y rotation so it faces even more forward (looking where going)
-    this.head = new THREE.Mesh(new THREE.SphereGeometry(0.155, 10, 8), skinMat);
-    this.head.position.y = 1.82;
-    this.head.rotation.y = -Math.PI * 0.28; // head looks toward travel
-    this.head.castShadow = true;
-    this.upperGroup.add(this.head);
-
-    const capCrown = new THREE.Mesh(new THREE.CylinderGeometry(0.135, 0.155, 0.10, 10), capMat);
-    capCrown.position.y = 1.97;
-    capCrown.rotation.y = this.head.rotation.y;
-    this.upperGroup.add(capCrown);
-
-    const capBrim = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.025, 0.26), capMat);
-    // brim follows head orientation (local Z of head)
-    const brimDir = new THREE.Vector3(0, 0, 0.16).applyEuler(new THREE.Euler(0, this.head.rotation.y, 0));
-    capBrim.position.set(brimDir.x, 1.925, brimDir.z);
-    capBrim.rotation.y = this.head.rotation.y;
-    this.upperGroup.add(capBrim);
-
-    // Arms — outspread along upper body's X axis for balance
-    const armGeo = new THREE.BoxGeometry(0.13, 0.48, 0.13);
-    this.leftArm = new THREE.Mesh(armGeo, shirtMat);
-    this.leftArm.position.set(-0.30, 1.22, 0);
-    this.leftArm.castShadow = true;
-    this.upperGroup.add(this.leftArm);
-
-    this.rightArm = new THREE.Mesh(armGeo, shirtMat);
-    this.rightArm.position.set(0.30, 1.22, 0);
-    this.rightArm.castShadow = true;
-    this.upperGroup.add(this.rightArm);
-
-    // Forearms / hands
-    const foreGeo = new THREE.BoxGeometry(0.10, 0.26, 0.10);
-    const handL = new THREE.Mesh(foreGeo, skinMat);
-    handL.position.set(-0.30, 0.90, 0);
-    this.upperGroup.add(handL);
-    const handR = new THREE.Mesh(foreGeo, skinMat);
-    handR.position.set(0.30, 0.90, 0);
-    this.upperGroup.add(handR);
-
-    // ══════════════════════════════════════════════════════════════════════
-    // PELVIS / WAIST BRIDGE
-    // Sits in innerGroup with an intermediate Y rotation (-PI*0.24) so it
-    // visually transitions between the sideways lowerGroup (0°) and the
-    // open upperGroup (-PI*0.55°).  Large enough to overlap both torso
-    // bottom and leg tops — hides the rotation seam completely.
-    // ══════════════════════════════════════════════════════════════════════
-
-    this.pelvisGroup = new THREE.Group();
-    this.pelvisGroup.rotation.y = -Math.PI * 0.025; // matches stance=0 start
-    this.innerGroup.add(this.pelvisGroup);
-    const pelvisGroup = this.pelvisGroup; // local alias for the rest of constructor
-
-    // Main pelvis block (pants colour — spans gap between legs and torso)
-    const pelvisMesh = new THREE.Mesh(
-      new THREE.BoxGeometry(0.52, 0.36, 0.28),
-      new THREE.MeshStandardMaterial({ color: 0x1a1a3e }),
-    );
-    pelvisMesh.position.y = 0.82;
-    pelvisMesh.castShadow = true;
-    pelvisGroup.add(pelvisMesh);
-
-    // Belt / waistband strip at the shirt-pants boundary
-    const beltMesh = new THREE.Mesh(
-      new THREE.BoxGeometry(0.50, 0.07, 0.30),
-      new THREE.MeshStandardMaterial({ color: 0x1a1010, roughness: 0.6, metalness: 0.25 }),
-    );
-    beltMesh.position.y = 1.00;
-    pelvisGroup.add(beltMesh);
-
-    // ══════════════════════════════════════════════════════════════════════
-    // LOWER BODY — articulated legs
-    // front foot = leftHip  (board nose side, at lowerGroup X = +0.21)
-    // back  foot = rightHip (board tail side, at lowerGroup X = -0.21)
-    // ══════════════════════════════════════════════════════════════════════
-
-    const thighGeo = new THREE.BoxGeometry(0.14, 0.34, 0.14);
-    const shinGeo  = new THREE.BoxGeometry(0.12, 0.32, 0.12);
-    const footGeo  = new THREE.BoxGeometry(0.17, 0.07, 0.28);
-
-    // ── Front (left) leg ──────────────────────────────────────────────────
-    this.leftHip = new THREE.Group();
-    this.leftHip.position.set(0.21, 0.78, 0);
-    this.lowerGroup.add(this.leftHip);
-
-    this.leftThigh = new THREE.Mesh(thighGeo, pantsMat);
-    this.leftThigh.position.y = -0.17;
-    this.leftThigh.castShadow = true;
-    this.leftHip.add(this.leftThigh);
-
-    this.leftKnee = new THREE.Group();
-    this.leftKnee.position.y = -0.34;
-    this.leftHip.add(this.leftKnee);
-
-    this.leftShin = new THREE.Mesh(shinGeo, pantsMat);
-    this.leftShin.position.y = -0.16;
-    this.leftShin.castShadow = true;
-    this.leftKnee.add(this.leftShin);
-
-    this.leftAnkle = new THREE.Group();
-    this.leftAnkle.position.y = -0.32;
-    this.leftKnee.add(this.leftAnkle);
-
-    this.leftFoot = new THREE.Mesh(footGeo, shoeMat);
-    this.leftFoot.position.set(0, -0.035, 0.05);
-    this.leftAnkle.add(this.leftFoot);
-
-    // ── Back (right) leg ──────────────────────────────────────────────────
-    this.rightHip = new THREE.Group();
-    this.rightHip.position.set(-0.21, 0.78, 0);
-    this.lowerGroup.add(this.rightHip);
-
-    this.rightThigh = new THREE.Mesh(thighGeo, pantsMat);
-    this.rightThigh.position.y = -0.17;
-    this.rightThigh.castShadow = true;
-    this.rightHip.add(this.rightThigh);
-
-    this.rightKnee = new THREE.Group();
-    this.rightKnee.position.y = -0.34;
-    this.rightHip.add(this.rightKnee);
-
-    this.rightShin = new THREE.Mesh(shinGeo, pantsMat);
-    this.rightShin.position.y = -0.16;
-    this.rightShin.castShadow = true;
-    this.rightKnee.add(this.rightShin);
-
-    this.rightAnkle = new THREE.Group();
-    this.rightAnkle.position.y = -0.32;
-    this.rightKnee.add(this.rightAnkle);
-
-    this.rightFoot = new THREE.Mesh(footGeo, shoeMat);
-    this.rightFoot.position.set(0, -0.035, 0.05);
-    this.rightAnkle.add(this.rightFoot);
-
-    // ══════════════════════════════════════════════════════════════════════
-    // BOARD
-    // deck long axis along lowerGroup local X (= world travel direction)
-    // ══════════════════════════════════════════════════════════════════════
-
-    this.boardGroup = new THREE.Group();
-    this.lowerGroup.add(this.boardGroup);
-
-    const deckMat = new THREE.MeshStandardMaterial({ color: 0xd2a8ff });
-    const kickMat = new THREE.MeshStandardMaterial({ color: 0xb888e8 });
-
-    const deck = new THREE.Mesh(new THREE.BoxGeometry(0.80, 0.033, 0.20), deckMat);
-    deck.position.y = 0.038;
-    deck.castShadow = true;
-    this.boardGroup.add(deck);
-
-    // Nose kick
-    const noseKick = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.033, 0.20), kickMat);
-    noseKick.position.set(0.42, 0.052, 0);
-    noseKick.rotation.z = -0.32;
-    this.boardGroup.add(noseKick);
-
-    // Tail kick
-    const tailKick = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.033, 0.20), kickMat);
-    tailKick.position.set(-0.42, 0.052, 0);
-    tailKick.rotation.z = 0.32;
-    this.boardGroup.add(tailKick);
-
-    // Trucks
-    const truckGeo = new THREE.BoxGeometry(0.06, 0.028, 0.22);
-    const frontTruck = new THREE.Mesh(truckGeo, truckMat);
-    frontTruck.position.set(0.28, 0.018, 0);
-    this.boardGroup.add(frontTruck);
-
-    const backTruck = new THREE.Mesh(truckGeo, truckMat);
-    backTruck.position.set(-0.28, 0.018, 0);
-    this.boardGroup.add(backTruck);
-
-    // Wheels — cylinder axis along local Z (board width)
-    const wheelGeo = new THREE.CylinderGeometry(0.035, 0.035, 0.046, 10);
-    for (const [wx, wz] of [[0.28, 0.114], [0.28, -0.114], [-0.28, 0.114], [-0.28, -0.114]]) {
-      const wheel = new THREE.Mesh(wheelGeo, wheelMat);
-      wheel.rotation.x = Math.PI / 2;
-      wheel.position.set(wx, 0.035, wz);
-      this.boardGroup.add(wheel);
-      this.wheels.push(wheel);
-    }
   }
 
-  // ── Public getters ─────────────────────────────────────────────────────────
-
-  get yaw():       number        { return this._yaw; }
-  get speed():     number        { return this._speed; }
-  get isBailing(): boolean       { return this._isBailing; }
-  get isGrounded(): boolean      { return !this.airborne; }
-  get isAirborne(): boolean      { return this.airborne; }
-  get pushing():   boolean       { return this.isPushing; }
+  get yaw(): number { return this._yaw; }
+  get speed(): number { return this._speed; }
+  get isGrounded(): boolean { return !this.airborne; }
+  get isAirborne(): boolean { return this.airborne; }
+  get pushing(): boolean { return this.isPushing; }
   get pushState(): { phase: PushPhase; phaseT: number; contactTravel: number; stride: number } {
     return { phase: this.push.phase, phaseT: this.push.phaseT, contactTravel: this.push.contactTravel, stride: this.push.stride };
   }
-  get lean():      number        { return this.currentLean; }
-  get shock():     number        { return this.landingShock; }
-  get trick():     TrickAnim     { return this.trickAnim; }
-  get turnInput(): number        { return this._turnInput; }
-  get braking():   boolean       { return this._braking; }
-  get bailProgress(): number     { return this._isBailing ? Math.min(this.bailTimer / BAIL_TOTAL, 1) : 0; }
-  get trickProgress(): number    { return this.trickAnim === 'none' ? 0 : Math.min(this.trickTimer / this.trickDuration, 1); }
-  get position():  THREE.Vector3 {
+  get shock(): number { return this.landingShock; }
+  get turnInput(): number { return this._turnInput; }
+  get braking(): boolean { return this._braking; }
+  /** 0 to 1 while Space is held on the ground (ollie charge) or in the air (bracing for the landing) */
+  get crouch(): number { return this._crouched ? Math.max(0.5, Math.min(this.charge / OLLIE_CHARGE, 1)) : 0; }
+  get crouched(): boolean { return this._crouched; }
+  /** Signed radians of spin this air; left is positive */
+  get spinAngle(): number { return this._spinAngle; }
+  get fakie(): boolean { return this._fakie; }
+  get grabHeld(): boolean { return this.grabHeldNow; }
+  get manualBalance(): number | null { return this.manualId ? this.balance.value : null; }
+  get manualTrick(): string | null { return this.manualId; }
+  get grindType(): string | null { return this._grindType; }
+  get position(): THREE.Vector3 {
     const p = this.body.position;
     return this._positionVec.set(p.x, p.y, p.z);
   }
 
-  triggerBail(): void {
-    if (this._isBailing) return;
-    this._isBailing = true;
-    this.bailTimer  = 0;
-    this.bailBoardX = 0;
-    this._speed    *= 0.2;
+  /** The trick the animation should show */
+  get trick(): TrickAnim {
+    if (this.manualId) return this.manualId;
+    if (this.grabId) return this.grabId;
+    if (this.flipId) return this.flipId;
+    if (this.ollieTimer >= 0) return 'ollie';
+    return 'none';
   }
 
-  playTrick(trick: TrickAnim): void {
-    if (trick === 'none') return;
-    this.trickAnim  = trick;
-    this.trickTimer = 0;
-    if (trick === 'manual') { this.trickDuration = MANUAL_DURATION; return; }
-    // Auto-ollie: any trick except manual pops the board into the air
-    if (!this.airborne) {
-      this.verticalVel = this.ollieImpulse;
-      this.airborne    = true;
+  get trickProgress(): number {
+    if (this.manualId) return 0.5;
+    if (this.grabId) {
+      if (this.grabReleaseTimer >= 0) return 0.75 + 0.25 * Math.min(this.grabReleaseTimer / GRAB_IN, 1);
+      return Math.min(this.grabTimer / GRAB_IN, 1) * 0.25 + (this.grabTimer > GRAB_IN ? 0.25 : 0);
     }
-    // Stretch the trick over most of the remaining flight so flips fill the jump
-    const g      = GRAVITY * 2;
-    const height = Math.max(0, this.body.position.y - this.HALF_HEIGHT - this.groundY);
-    const flight = (this.verticalVel + Math.sqrt(this.verticalVel ** 2 + 2 * g * height)) / g;
-    this.trickDuration = Math.min(Math.max(flight * 0.85, 0.35), 0.8);
+    if (this.flipId) return Math.min(this.flipTimer / this.flipDuration, 1);
+    if (this.ollieTimer >= 0) return Math.min(this.ollieTimer / this.ollieDuration, 1);
+    return 0;
   }
 
-  // ── Helpers ────────────────────────────────────────────────────────────────
+  // ── Trick commands ─────────────────────────────────────────────────────────
 
-  private lerp(cur: number, tgt: number, rate: number, dt: number): number {
-    return cur + (tgt - cur) * (1 - Math.exp(-rate * dt));
+  /** Pops if grounded; ignored while another flip is still turning */
+  startFlip(id: string): boolean {
+    if (this.flipId || this.manualId || this.grabId) return false;
+    if (!this.airborne) this.pop(FLIP_POP, false);
+    this.flipId = id;
+    this.flipTimer = 0;
+    this.flipDuration = this.stretchedDuration();
+    this.airTricks.push(id);
+    return true;
   }
 
-  /** Drive hip/knee/ankle toward target angles at given rate */
-  private poseLeg(
-    hip: THREE.Group, knee: THREE.Group, ankle: THREE.Group,
-    hipX: number, kneeX: number, ankleX: number,
-    rate: number, dt: number,
-  ) {
-    hip.rotation.x   = this.lerp(hip.rotation.x,   hipX,   rate, dt);
-    knee.rotation.x  = this.lerp(knee.rotation.x,  kneeX,  rate, dt);
-    ankle.rotation.x = this.lerp(ankle.rotation.x, ankleX, rate, dt);
+  startGrab(id: string): boolean {
+    if (!this.airborne || this.grabId || this.flipId) return false;
+    this.grabId = id;
+    this.grabHeldNow = true;
+    this.grabTimer = 0;
+    this.grabReleaseTimer = -1;
+    this.airTricks.push(id);
+    return true;
   }
 
-  /** Nearest near-vertical surface the body would run into, from a fan of rays across its width and height. */
-  private findWall(dx: number, dz: number): CANNON.Vec3 | null {
-    const moveDist = Math.sqrt(dx * dx + dz * dz);
-    if (moveDist < 0.001) return null;
-    const nx = dx / moveDist, nz = dz / moveDist;
-    const reach = BODY_RADIUS + moveDist + 0.05;
-    const feetY = this.body.position.y - this.HALF_HEIGHT;
-
-    let nearest = Infinity;
-    let normal: CANNON.Vec3 | null = null;
-    const res = new CANNON.RaycastResult();
-    for (const h of WALL_RAY_HEIGHTS) {
-      for (const side of WALL_RAY_SIDES) {
-        const from = new CANNON.Vec3(
-          this.body.position.x - nz * side * BODY_RADIUS,
-          feetY + h,
-          this.body.position.z + nx * side * BODY_RADIUS,
-        );
-        const to = new CANNON.Vec3(from.x + nx * reach, from.y, from.z + nz * reach);
-        res.reset();
-        this.world.raycastClosest(from, to, { skipBackfaces: false, collisionFilterGroup: 1, collisionFilterMask: 1 }, res);
-        // Slopes (ramps, quarter pipes) are ridden, not blocked
-        if (!res.hasHit || Math.abs(res.hitNormalWorld.y) > 0.5) continue;
-        if (res.hitNormalWorld.x * nx + res.hitNormalWorld.z * nz >= 0) continue; // exit face of something we're already leaving
-        if (this.isStepUp(res.hitPointWorld, res.hitNormalWorld)) continue;
-        if (res.distance < nearest) {
-          nearest = res.distance;
-          normal = res.hitNormalWorld.clone();
-        }
-      }
+  releaseGrab(): void {
+    if (this.grabId && this.grabHeldNow) {
+      this.grabHeldNow = false;
+      this.grabReleaseTimer = 0;
     }
-    return nearest < BODY_RADIUS + moveDist ? normal : null;
   }
 
-  private groundBelow(x: number, z: number, fromY: number): number | null {
-    const res = new CANNON.RaycastResult();
-    this.world.raycastClosest(
-      new CANNON.Vec3(x, fromY, z), new CANNON.Vec3(x, -10, z),
-      { skipBackfaces: true, collisionFilterGroup: 1, collisionFilterMask: 1 }, res,
-    );
-    return res.hasHit ? res.hitPointWorld.y : null;
+  startManual(id: string): boolean {
+    if (this.airborne || this.manualId || this._speed < MANUAL_MIN_SPEED) return false;
+    this.manualId = id;
+    this.balance.start();
+    return true;
   }
 
-  /** A face is only a wall if its top stands more than a step above the ground in front of it (e.g. a bank meeting a box). */
-  private isStepUp(hit: CANNON.Vec3, normal: CANNON.Vec3): boolean {
-    const probeY = hit.y + STEP_HEIGHT + 0.05;
-    const top    = this.groundBelow(hit.x - normal.x * 0.02, hit.z - normal.z * 0.02, probeY);
-    // Probe started inside the obstacle, so its top is higher than a step
-    if (top === null || top < hit.y) return false;
-    const front = this.groundBelow(hit.x + normal.x * 0.05, hit.z + normal.z * 0.05, hit.y);
-    return top - (front ?? 0) <= STEP_HEIGHT;
+  setGrinding(type: string | null): void { this._grindType = type; }
+
+  /** After a clean landing: a 180 or 540 rides out fakie */
+  landClean(halfTurns: number): void {
+    if (Math.abs(halfTurns) % 2 === 1) this._fakie = !this._fakie;
+    this._spinAngle = 0;
   }
 
-  /** Slide horizontal movement along any walls in the way; a second pass catches corners. */
-  private resolveWalls(dx: number, dz: number): [number, number] {
-    for (let pass = 0; pass < 2; pass++) {
-      const n = this.findWall(dx, dz);
-      if (!n) return [dx, dz];
-      const dot = dx * n.x + dz * n.z;
-      dx -= dot * n.x;
-      dz -= dot * n.z;
-    }
-    return this.findWall(dx, dz) ? [0, 0] : [dx, dz];
+  /** Back on the board after a bail, or after a zone switch */
+  reset(feet: { x: number; y: number; z: number }, yaw: number): void {
+    this.body.position.set(feet.x, feet.y + HALF_HEIGHT, feet.z);
+    this._yaw = yaw;
+    this._speed = 0;
+    this.verticalVel = 0;
+    this.airborne = false;
+    this.groundY = feet.y;
+    this._fakie = false;
+    this.clearHeld();
   }
 
-  // ── Main update ────────────────────────────────────────────────────────────
+  /** Drops held grabs, charges, manuals and pending events (zone switches, bails) */
+  clearHeld(): void {
+    this.flipId = null;
+    this.grabId = null;
+    this.grabHeldNow = false;
+    this.manualId = null;
+    this.ollieTimer = -1;
+    this.charge = 0;
+    this.wasOllieHeld = false;
+    this._crouched = false;
+    this._spinAngle = 0;
+    this.airTricks = [];
+    this.grabTicksTotal = 0;
+    this.pendingLanding = null;
+    this.pendingWallHit = null;
+    this.manualFailed = false;
+  }
+
+  consumeLanding(): LandingEvent | null { const e = this.pendingLanding; this.pendingLanding = null; return e; }
+  consumeWallHit(): { before: number; after: number } | null { const e = this.pendingWallHit; this.pendingWallHit = null; return e; }
+  consumeManualFail(): boolean { const f = this.manualFailed; this.manualFailed = false; return f; }
+
+  // ── Update ─────────────────────────────────────────────────────────────────
 
   update(delta: number, input: SkaterInput): void {
-    this.animTime += delta;
-
-    // ══════════════════════════════════════════════════════════════════════
-    // BAIL ANIMATION
-    // ══════════════════════════════════════════════════════════════════════
-    if (this._isBailing) {
-      this.bailTimer += delta;
-      const bt = this.bailTimer;
-
-      if (bt < BAIL_FALL) {
-        const t = bt / BAIL_FALL;
-        // Body slams forward
-        this.innerGroup.rotation.x = t * Math.PI * 0.45;
-        this.innerGroup.rotation.z = t * 0.5;
-        // Arms flail up
-        this.leftArm.rotation.x   =  t * 1.0;
-        this.rightArm.rotation.x  = -t * 1.2;
-        // Legs collapse
-        this.poseLeg(this.leftHip,  this.leftKnee,  this.leftAnkle,  t * 0.8, t * 0.5, 0, 20, delta);
-        this.poseLeg(this.rightHip, this.rightKnee, this.rightAnkle, t * 1.0, t * 0.8, 0, 20, delta);
-        // Board flies off
-        this.bailBoardX += delta * 6;
-        this.boardGroup.position.x = this.bailBoardX;
-        this.boardGroup.rotation.z += delta * 10;
-
-      } else if (bt < BAIL_FALL + BAIL_GROUND) {
-        const t = (bt - BAIL_FALL) / BAIL_GROUND;
-        this.innerGroup.rotation.x = Math.PI * 0.45;
-        this.innerGroup.rotation.z = 0.5 * (1 - t * 0.5);
-        // Board continues sliding, decelerating
-        this.bailBoardX += delta * (3 * (1 - t));
-        this.boardGroup.position.x  = this.bailBoardX;
-        this.boardGroup.rotation.z += delta * 4 * (1 - t);
-
-      } else {
-        // Get up — body rises, board slides back
-        const t = (bt - BAIL_FALL - BAIL_GROUND) / BAIL_GETUP;
-        this.innerGroup.rotation.x = (1 - t) * Math.PI * 0.45;
-        this.innerGroup.rotation.z = (1 - t) * 0.25;
-        this.leftArm.rotation.x   = (1 - t) * 1.0;
-        this.rightArm.rotation.x  = -(1 - t) * 1.2;
-        const getupEase = 1 - (1 - t) * (1 - t); // ease in
-        this.poseLeg(this.leftHip,  this.leftKnee,  this.leftAnkle,  -0.22 * getupEase, 0.4 * (1 - getupEase), -0.08, 12, delta);
-        this.poseLeg(this.rightHip, this.rightKnee, this.rightAnkle, -0.14 * getupEase, 0.3 * (1 - getupEase), -0.05, 12, delta);
-        this.boardGroup.position.x = this.lerp(this.boardGroup.position.x, 0, 6, delta);
-        this.boardGroup.rotation.z = this.lerp(this.boardGroup.rotation.z, 0, 5, delta);
-      }
-
-      if (bt >= BAIL_TOTAL) {
-        this._isBailing = false;
-        this.bailTimer  = 0;
-        this.bailBoardX = 0;
-        this.innerGroup.rotation.set(0, 0, 0);
-        this.innerGroup.position.set(0, 0, 0);
-        this.boardGroup.rotation.set(0, 0, 0);
-        this.boardGroup.position.set(0, 0, 0);
-        this.leftArm.rotation.set(0, 0, 0);
-        this.rightArm.rotation.set(0, 0, 0);
-      }
-
-      // Bail physics
-      this.verticalVel -= GRAVITY * delta * 2;
-      this.body.position.y += this.verticalVel * delta;
-      const bRF = new CANNON.Vec3(this.body.position.x, this.body.position.y + 2, this.body.position.z);
-      const bRT = new CANNON.Vec3(this.body.position.x, -10, this.body.position.z);
-      const bRR = new CANNON.RaycastResult();
-      this.world.raycastClosest(bRF, bRT, { skipBackfaces: true, collisionFilterGroup: 1, collisionFilterMask: 1 }, bRR);
-      if (bRR.hasHit && bRR.hitPointWorld) this.groundY = bRR.hitPointWorld.y;
-      const bailFeet = this.groundY + this.HALF_HEIGHT;
-      if (this.body.position.y <= bailFeet) { this.body.position.y = bailFeet; this.verticalVel = 0; this.airborne = false; }
-      else this.airborne = true;
-      if (this.body.position.y < -10) { this.body.position.set(0, 2, 0); this._speed = 0; this.verticalVel = 0; }
-
-      this.body.position.x += Math.sin(this._yaw) * this._speed * delta;
-      this.body.position.z += Math.cos(this._yaw) * this._speed * delta;
-      this._speed *= (1 - 4 * delta);
-      if (this._speed < 0.01) this._speed = 0;
-      this.mesh.position.set(this.body.position.x, this.body.position.y - this.HALF_HEIGHT, this.body.position.z);
-      this.mesh.rotation.y = this._yaw;
-      return;
-    }
-
-    // ══════════════════════════════════════════════════════════════════════
-    // MOVEMENT
-    // ══════════════════════════════════════════════════════════════════════
-
+    const inManual = this.manualId !== null;
     const turnInput = (input.left ? 1 : 0) - (input.right ? 1 : 0);
     this._turnInput = turnInput;
-    this._braking   = input.backward && !input.forward;
+    this._braking = input.backward && !input.forward && !inManual;
     this._yaw += turnInput * this.turnSpeed * delta;
-
     const forward = new CANNON.Vec3(Math.sin(this._yaw), 0, Math.cos(this._yaw));
-    if (input.forward || input.backward || input.ollie || input.left || input.right) this.body.wakeUp();
 
-    const wasPushing = this.isPushing;
-    const wantPush = input.forward && !input.backward && !this.airborne;
+    // ── Speed ──
+    const wantPush = input.forward && !input.backward && !this.airborne && !inManual;
     const thrusting = this.push.update(delta, this._speed, wantPush, this._speed >= this.maxSpeed * 0.98);
     this.isPushing = this.push.phase !== 'none';
     if (thrusting) {
       this._speed = Math.min(this._speed + this.pushThrust * delta, this.maxSpeed);
-    } else if (input.backward) {
+    } else if (this._braking) {
       this._speed = Math.max(this._speed - this.brakeForce * delta, 0);
     } else {
-      // Rolling resistance is light between strokes, stronger when coasting
-      this._speed *= (1 - (this.isPushing || input.forward ? 0.3 : 2) * delta);
+      // Rolling resistance is light between strokes and in manuals, stronger when coasting
+      this._speed *= (1 - (this.isPushing || input.forward || inManual ? 0.3 : 2) * delta);
       if (this._speed < 0.01) this._speed = 0;
     }
-    if (this.isPushing && !wasPushing) this.pushPhase = 0;
-    if (this.isPushing) this.pushPhase += delta * 3.0;
 
+    // ── Walls ──
+    const feetY = this.body.position.y - HALF_HEIGHT;
     const wantX = forward.x * this._speed * delta, wantZ = forward.z * this._speed * delta;
-    const [_dx, _dz] = this.resolveWalls(wantX, wantZ);
+    const [dx, dz] = resolveWalls(this.world, this.body.position.x, feetY, this.body.position.z, wantX, wantZ, RIDER_PROBE);
     // Keep only the speed that survived the wall: head-on stops, a glancing hit slides on
     const wanted = Math.hypot(wantX, wantZ);
-    if (wanted > 0.001) this._speed *= Math.hypot(_dx, _dz) / wanted;
-    this.body.position.x += _dx;
-    this.body.position.z += _dz;
+    if (wanted > 0.001) {
+      const before = this._speed;
+      this._speed *= Math.hypot(dx, dz) / wanted;
+      if (this._speed < before * 0.9) this.pendingWallHit = { before, after: this._speed };
+    }
+    this.body.position.x += dx;
+    this.body.position.z += dz;
 
-    // Raycast ground
+    // ── Ground ──
     const groundBefore = this.groundY;
-    const rayFrom   = new CANNON.Vec3(this.body.position.x, this.body.position.y + 2, this.body.position.z);
-    const rayTo     = new CANNON.Vec3(this.body.position.x, -10, this.body.position.z);
-    const rayResult = new CANNON.RaycastResult();
-    const hasHit = this.world.raycastClosest(rayFrom, rayTo, { skipBackfaces: true, collisionFilterGroup: 1, collisionFilterMask: 1 }, rayResult);
-    if (hasHit) this.groundY = rayResult.hitPointWorld.y;
-    else this.groundY = 0;
-
+    const hit = groundHit(this.world, this.body.position.x, this.body.position.z, this.body.position.y + 2);
+    this.groundY = hit?.y ?? 0;
     // A flat top more than a step above the feet is a ledge we clipped into, not ground to snap up onto.
     // If the ground under the old position is just as high we were already embedded (e.g. spawned
     // inside a platform), so let the snap lift us out instead of pinning us in place.
-    const feetY = this.body.position.y - this.HALF_HEIGHT;
-    if (!this.airborne && hasHit && this.groundY - feetY > STEP_HEIGHT && rayResult.hitNormalWorld.y > 0.95) {
-      const backX = this.body.position.x - _dx;
-      const backZ = this.body.position.z - _dz;
-      const back = new CANNON.RaycastResult();
-      this.world.raycastClosest(
-        new CANNON.Vec3(backX, this.body.position.y + 2, backZ), new CANNON.Vec3(backX, -10, backZ),
-        { skipBackfaces: true, collisionFilterGroup: 1, collisionFilterMask: 1 }, back,
-      );
-      const embedded = back.hasHit && back.hitPointWorld.y - feetY > STEP_HEIGHT;
+    if (!this.airborne && hit && this.groundY - feetY > STEP_HEIGHT && hit.normalY > 0.95) {
+      const back = groundHit(this.world, this.body.position.x - dx, this.body.position.z - dz, this.body.position.y + 2);
+      const embedded = back !== null && back.y - feetY > STEP_HEIGHT;
       if (!embedded) {
-        this.body.position.x = backX;
-        this.body.position.z = backZ;
+        this.body.position.x -= dx;
+        this.body.position.z -= dz;
         this.groundY = groundBefore;
         this._speed = 0;
       }
     }
+    const feetHeight = this.groundY + HALF_HEIGHT;
 
-    const feetHeight = this.groundY + this.HALF_HEIGHT;
-
-    // Bowl pump: detect slope (groundY rising = pump up = extend legs, falling = absorb)
-    const groundSlope  = (this.groundY - this.prevGroundY) / Math.max(delta, 0.001);
-    this.prevGroundY   = this.groundY;
-    const pumpTarget   = Math.max(-0.3, Math.min(0.25, groundSlope * 0.08));
-    this.pumpAmount    = this.lerp(this.pumpAmount, pumpTarget, 5, delta);
-
-    // Ollie / jump
-    if (input.ollie && !this.airborne) {
-      this.verticalVel = this.ollieImpulse;
-      this.airborne    = true;
+    // ── Ollie charge: hold Space to crouch, release to pop ──
+    this._crouched = input.ollieHeld;
+    if (input.ollieHeld && !this.airborne) this.charge += delta;
+    const released = this.wasOllieHeld && !input.ollieHeld;
+    this.wasOllieHeld = input.ollieHeld;
+    if (released && !this.airborne && this.charge > 0) {
+      this.manualId = null;
+      this.pop(OLLIE_MIN + (OLLIE_MAX - OLLIE_MIN) * Math.min(this.charge / OLLIE_CHARGE, 1), true);
     }
+    if (!input.ollieHeld) this.charge = 0;
 
-    const wasAirborne = this.airborne;
+    // ── Vertical ──
     if (this.airborne) {
-      this.verticalVel     -= GRAVITY * delta * 2;
+      this.verticalVel -= GRAVITY * delta;
       this.body.position.y += this.verticalVel * delta;
+      this.peakFeetY = Math.max(this.peakFeetY, this.body.position.y - HALF_HEIGHT);
+      this._spinAngle += ((input.spinLeft ? 1 : 0) - (input.spinRight ? 1 : 0)) * SPIN_RATE * delta;
       if (this.body.position.y <= feetHeight) {
         this.body.position.y = feetHeight;
-        // Landing shock — harder landings = deeper shock
-        if (wasAirborne) this.landingShock = Math.min(1.0, Math.abs(this.verticalVel) * 0.08);
-        this.verticalVel = 0;
-        this.airborne    = false;
+        this.landingShock = Math.min(1, Math.abs(this.verticalVel) * 0.08);
+        this.touchDown();
       }
+    } else if (this.body.position.y - feetHeight > AIRBORNE_THRESHOLD) {
+      this.leaveGround(0);
     } else {
-      const currentY = this.body.position.y;
-      if (currentY - feetHeight > this.AIRBORNE_THRESHOLD) {
-        this.airborne    = true;
-        this.verticalVel = 0;
-      } else {
-        this.body.position.y = feetHeight;
-      }
+      this.body.position.y = feetHeight;
     }
-
-    // Landing shock decays
     this.landingShock = Math.max(0, this.landingShock - delta * 4);
 
-    if (this.body.position.y < -10) {
-      this.body.position.set(0, 2, 0); this._speed = 0; this.verticalVel = 0; this.airborne = false;
+    // ── Trick timers ──
+    if (this.flipId) {
+      this.flipTimer += delta;
+      if (this.flipTimer >= this.flipDuration) this.flipId = null;
     }
-
-    // ══════════════════════════════════════════════════════════════════════
-    // BODY ANIMATION
-    // ══════════════════════════════════════════════════════════════════════
-    const speedRatio = this._speed / this.maxSpeed;
-
-    if (this.trickAnim === 'none') {
-
-      // ── Lean / tilt (whole body via innerGroup) ──────────────────────────
-      const targetLean = -turnInput * 0.20 * Math.max(speedRatio, 0.25);
-      this.currentLean = this.lerp(this.currentLean, targetLean, 8, delta);
-      let targetTilt   = 0;
-      if (input.forward)      targetTilt = -0.06 - speedRatio * 0.05;
-      else if (input.backward) targetTilt = 0.10;
-      this.currentTilt = this.lerp(this.currentTilt, targetTilt, 6, delta);
-
-      this.innerGroup.rotation.z = this.currentLean;
-      this.innerGroup.rotation.x = this.currentTilt;
-      this.innerGroup.position.y = 0;
-      this.boardGroup.rotation.z = this.currentLean * 0.55;
-
-      // ── Leg animation ────────────────────────────────────────────────────
-
-      if (this.airborne) {
-        // ── AIR: full tuck — hip forward, knee sharp bend ─────────────────
-        //   hipX  < 0  → thigh swings forward (toward character's facing dir)
-        //   kneeX > 0  → shin bends back      (classic tuck position)
-        this.poseLeg(this.leftHip,  this.leftKnee,  this.leftAnkle,  -0.65, 1.20, 0.10, 12, delta);
-        this.poseLeg(this.rightHip, this.rightKnee, this.rightAnkle, -0.55, 1.10, 0.08, 12, delta);
-        // Arms out for air balance
-        this.leftArm.rotation.z  = this.lerp(this.leftArm.rotation.z,   0.80, 8, delta);
-        this.rightArm.rotation.z = this.lerp(this.rightArm.rotation.z, -0.80, 8, delta);
-        this.leftArm.rotation.x  = 0;
-        this.rightArm.rotation.x = 0;
-
-      } else if (this.isPushing) {
-        // ── PUSH: back foot (rightHip) steps off, kicks, returns ──────────
-        // pushPhase cycles 0→1 per push stroke
-        const cycle = this.pushPhase % 1.0;
-        // sin(cycle*2π): 0 at start, +1 at 0.25 (kick out), 0 at 0.5, -0.x recovery
-        const kickCurve = Math.sin(cycle * Math.PI * 2);
-        // liftCurve: 1 when foot is off board (middle of stroke)
-        const liftCurve = Math.max(0, kickCurve);
-
-        // Front leg stays planted with bent knee (weight bearing)
-        this.poseLeg(this.leftHip,  this.leftKnee,  this.leftAnkle,
-          -0.22,                            // hip fwd — thigh angled forward
-          0.46,                             // knee — good riding bend
-          -0.10,                            // ankle — foot flat
-          10, delta);
-
-        // Push leg swings back (hip rotates) + extends (knee straightens).
-        // Hip pivot stays at y=0.78 — the leg reaches toward the ground purely
-        // through rotation so the leg never visually detaches from the body.
-        // hipX > 0 → thigh swings backward; kneeX small → leg straightens toward ground
-        const pushHip   = -0.14 + kickCurve * 0.82; // forward → backward swing
-        const pushKnee  =  0.36 - liftCurve * 0.28; // bends → near-straight on kick
-        const pushAnkle = -0.08 + liftCurve * 0.22; // toe up as foot brushes ground
-        this.poseLeg(this.rightHip, this.rightKnee, this.rightAnkle,
-          pushHip, pushKnee, pushAnkle, 14, delta);
-
-        // Arms swing for balance
-        const armSwing = kickCurve * 0.30;
-        this.leftArm.rotation.x  = this.lerp(this.leftArm.rotation.x,   armSwing, 6, delta);
-        this.rightArm.rotation.x = this.lerp(this.rightArm.rotation.x, -armSwing * 0.6, 6, delta);
-        this.leftArm.rotation.z  = this.lerp(this.leftArm.rotation.z,   0.18, 5, delta);
-        this.rightArm.rotation.z = this.lerp(this.rightArm.rotation.z, -0.18, 5, delta);
-
+    if (this.ollieTimer >= 0) {
+      this.ollieTimer += delta;
+      if (this.ollieTimer >= this.ollieDuration) this.ollieTimer = -1;
+    }
+    if (this.grabId) {
+      if (this.grabHeldNow) {
+        this.grabTimer += delta;
+        if (this.grabTimer > GRAB_IN) this.grabTicksTotal += delta * 10;
       } else {
-        // ── RIDING or IDLE ────────────────────────────────────────────────
-
-        // Crouch depth: more at high speed + landing shock + bowl absorption
-        const crouchBase  = 0.12 + speedRatio * 0.20;
-        const shockAdd    = this.landingShock * 0.35;
-        const pumpAdd     = -this.pumpAmount * 0.25;  // positive pump = extend (less crouch)
-        const totalCrouch = Math.max(0, crouchBase + shockAdd + pumpAdd);
-
-        // Hip angle: negative = thigh forward (real skater stance)
-        // Knee angle: positive = shin back = knee bent
-        // More crouch = bigger angles
-        const frontHipX   = -(0.22 + totalCrouch * 0.40);
-        const frontKneeX  =   0.44 + totalCrouch * 0.75;
-        const frontAnkleX = -(0.08 + totalCrouch * 0.10);
-
-        const backHipX    = -(0.14 + totalCrouch * 0.30);
-        const backKneeX   =   0.30 + totalCrouch * 0.60;
-        const backAnkleX  = -(0.06 + totalCrouch * 0.08);
-
-        const rate = this.landingShock > 0.3 ? 20 : 7; // fast on landing
-        this.poseLeg(this.leftHip,  this.leftKnee,  this.leftAnkle,  frontHipX, frontKneeX, frontAnkleX, rate, delta);
-        this.poseLeg(this.rightHip, this.rightKnee, this.rightAnkle, backHipX,  backKneeX,  backAnkleX,  rate, delta);
-
-        // Lower body with crouch
-        this.innerGroup.position.y = -totalCrouch * 0.06;
-
-        if (this._speed > 0.5) {
-          // Riding: arms spread wide, subtle fore-aft sway
-          const spread = 0.25 + speedRatio * 0.50;
-          const sway   = Math.sin(this.animTime * 2.0) * 0.04 * speedRatio;
-          this.leftArm.rotation.z  = this.lerp(this.leftArm.rotation.z,   spread, 5, delta);
-          this.rightArm.rotation.z = this.lerp(this.rightArm.rotation.z, -spread, 5, delta);
-          this.leftArm.rotation.x  = this.lerp(this.leftArm.rotation.x,   sway,   4, delta);
-          this.rightArm.rotation.x = this.lerp(this.rightArm.rotation.x, -sway,   4, delta);
-        } else {
-          // Idle: slight weight shift
-          const idleBob = Math.sin(this.animTime * 1.2) * 0.012;
-          this.innerGroup.position.y = idleBob - totalCrouch * 0.06;
-          this.leftArm.rotation.z  = this.lerp(this.leftArm.rotation.z,   0.14, 4, delta);
-          this.rightArm.rotation.z = this.lerp(this.rightArm.rotation.z, -0.14, 4, delta);
-          this.leftArm.rotation.x  = 0;
-          this.rightArm.rotation.x = 0;
-        }
+        this.grabReleaseTimer += delta;
+        if (this.grabReleaseTimer >= GRAB_IN) { this.grabId = null; this.grabReleaseTimer = -1; }
       }
-
-      // Wheel spin
-      const wheelSpin = this._speed * delta * 22;
-      for (const w of this.wheels) w.rotation.y += wheelSpin;
     }
-
-    // Trick timer; the visible SkaterModel animates the trick from trick/trickProgress
-    if (this.trickAnim !== 'none') {
-      this.trickTimer += delta;
-      const t    = Math.min(this.trickTimer / this.trickDuration, 1);
-      if (t >= 1) {
-        this.trickAnim  = 'none';
-        this.trickTimer = 0;
-        this.boardGroup.rotation.set(0, 0, 0);
-        this.innerGroup.rotation.set(0, 0, 0);
-        this.innerGroup.position.set(0, 0, 0);
+    if (this.manualId) {
+      if (this._speed < MANUAL_MIN_SPEED) this.manualId = null;
+      else if (this.balance.update(delta, (input.forward ? 1 : 0) - (input.backward ? 1 : 0))) {
+        this.manualId = null;
+        this.manualFailed = true;
       }
     }
 
-    // Dynamic stance: front-facing (0) when idle or pushing, sideways (PI/2) when riding/airborne
-    const _stanceTarget = (this.airborne || (this._speed > 0.5 && !this.isPushing)) ? Math.PI / 2 : 0;
-    this.stanceGroup.rotation.y = this.lerp(this.stanceGroup.rotation.y, _stanceTarget, 5, delta);
-    // Upper body world angle stays near-forward (-PI*0.05) regardless of foot stance
-    this.upperGroup.rotation.y  = this.lerp(this.upperGroup.rotation.y, -Math.PI * 0.05 - this.stanceGroup.rotation.y, 7, delta);
-    // Pelvis bridges between lower (stance-relative) and upper (world-forward)
-    const _pelvisMid = (this.stanceGroup.rotation.y + (-Math.PI * 0.05)) / 2;
-    this.pelvisGroup.rotation.y = this.lerp(this.pelvisGroup.rotation.y, _pelvisMid - this.stanceGroup.rotation.y, 5, delta);
-
-    // Sync mesh to physics
-    this.mesh.position.set(
-      this.body.position.x,
-      this.body.position.y - this.HALF_HEIGHT,
-      this.body.position.z,
-    );
-    this.mesh.rotation.y = this._yaw;
+    if (this.body.position.y < -10) {
+      this.body.position.set(0, 2, 0);
+      this._speed = 0;
+      this.verticalVel = 0;
+      this.airborne = false;
+    }
   }
+
+  private pop(velocity: number, ollie: boolean): void {
+    this.leaveGround(velocity);
+    this.ollied = ollie;
+    this.ollieTimer = 0;
+    this.ollieDuration = this.stretchedDuration();
+  }
+
+  private leaveGround(velocity: number): void {
+    this.verticalVel = velocity;
+    this.airborne = true;
+    this.peakFeetY = this.body.position.y - HALF_HEIGHT;
+    this._spinAngle = 0;
+    this.airTricks = [];
+    this.ollied = false;
+    this.grabTicksTotal = 0;
+  }
+
+  private touchDown(): void {
+    const residual = this._spinAngle - Math.round(this._spinAngle / Math.PI) * Math.PI;
+    const flipUnfinished = this.flipId !== null && this.flipTimer < this.flipDuration;
+    this.pendingLanding = {
+      snapshot: {
+        flipProgress: flipUnfinished ? this.flipTimer / this.flipDuration : null,
+        grabHeld: this.grabHeldNow,
+        spinResidualDeg: THREE.MathUtils.radToDeg(residual),
+        dropHeight: this.peakFeetY - this.groundY,
+        crouched: this._crouched,
+      },
+      airTricks: [...this.airTricks],
+      halfTurns: Math.round(this._spinAngle / Math.PI),
+      grabTicks: Math.floor(this.grabTicksTotal),
+      ollied: this.ollied,
+    };
+    this.verticalVel = 0;
+    this.airborne = false;
+    this.flipId = null;
+    this.grabId = null;
+    this.grabHeldNow = false;
+    this.ollieTimer = -1;
+  }
+
+  /** Most of the remaining flight, so flips and the ollie fill the jump */
+  private stretchedDuration(): number {
+    const height = Math.max(0, this.body.position.y - HALF_HEIGHT - this.groundY);
+    const flight = (this.verticalVel + Math.sqrt(this.verticalVel ** 2 + 2 * GRAVITY * height)) / GRAVITY;
+    return Math.min(Math.max(flight * 0.85, 0.35), 0.8);
+  }
+}
+
+export function trickName(id: string): string {
+  return TRICKS[id]?.name ?? id;
 }

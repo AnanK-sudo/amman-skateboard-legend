@@ -14,8 +14,7 @@ function makeWorld(): CANNON.World {
 
 const baseInput: SkaterInput = {
   forward: false, backward: false, left: false, right: false,
-  ollie: false, trick1: false, trick2: false, grind: false,
-  grab: false, manual: false, cameraYaw: 0,
+  ollieHeld: false, spinLeft: false, spinRight: false,
 };
 
 describe('Skater', () => {
@@ -146,8 +145,9 @@ describe('Skater collision', () => {
     const world = makeWorld();
     addBox(world, 0, -15, 2, 0.5, 10);
     const skater = new Skater(world, { x: 0, y: 0.9, z: 0 });
-    ride(world, skater, 50);
-    ride(world, skater, 1, { ollie: true });
+    ride(world, skater, 38);
+    ride(world, skater, 12, { ollieHeld: true });
+    ride(world, skater, 1);
     ride(world, skater, 40);
     expect(skater.body.position.z).toBeLessThan(-5);
     expect(skater.body.position.y - 0.9).toBeCloseTo(0.5, 1);
@@ -158,7 +158,7 @@ describe('Skater trick state', () => {
   it('exposes the playing trick and its progress for the visible model', () => {
     const world = makeWorld();
     const skater = new Skater(world, { x: 0, y: 0.9, z: 0 });
-    skater.playTrick('kickflip');
+    skater.startFlip('kickflip');
     skater.update(0.1, baseInput);
     expect(skater.trick).toBe('kickflip');
     expect(skater.trickProgress).toBeGreaterThan(0.15);
@@ -188,28 +188,12 @@ describe('Skater pushing', () => {
 describe('Skater animation facts', () => {
   const OLLIE_AIRTIME = (2 * 6) / (9.82 * 2);
 
-  it('stretches a kickflip to fill most of the ollie airtime', () => {
+  it('stretches a kickflip to fill most of the airtime', () => {
     const world = makeWorld();
     const skater = new Skater(world, { x: 0, y: 0.9, z: 0 });
-    skater.playTrick('kickflip');
+    skater.startFlip('kickflip');
     skater.update(OLLIE_AIRTIME * 0.85 / 2, baseInput);
     expect(skater.trickProgress).toBeCloseTo(0.5, 1);
-  });
-
-  it('holds a manual for 0.6 s', () => {
-    const world = makeWorld();
-    const skater = new Skater(world, { x: 0, y: 0.9, z: 0 });
-    skater.playTrick('manual');
-    skater.update(0.3, baseInput);
-    expect(skater.trickProgress).toBeCloseTo(0.5, 1);
-  });
-
-  it('reports bail progress from 0 to 1', () => {
-    const world = makeWorld();
-    const skater = new Skater(world, { x: 0, y: 0.9, z: 0 });
-    skater.triggerBail();
-    skater.update(0.75, baseInput);
-    expect(skater.bailProgress).toBeCloseTo(0.5, 1);
   });
 
   it('reports turn input and braking', () => {
@@ -218,5 +202,148 @@ describe('Skater animation facts', () => {
     skater.update(1 / 60, { ...baseInput, left: true, backward: true });
     expect(skater.turnInput).toBe(1);
     expect(skater.braking).toBe(true);
+  });
+});
+
+function airtimeOf(skater: Skater, world: CANNON.World, input: Partial<SkaterInput> = {}): number {
+  let t = 0;
+  while (skater.isAirborne && t < 3) { skater.update(1 / 120, { ...baseInput, ...input }); world.step(1 / 120); t += 1 / 120; }
+  return t;
+}
+
+describe('Charged ollie', () => {
+  it('pops higher the longer Space is held, up to 0.4 s', () => {
+    const jump = (hold: number) => {
+      const world = makeWorld();
+      const skater = new Skater(world, { x: 0, y: 0.9, z: 0 });
+      for (let t = 0; t < hold; t += 1 / 120) skater.update(1 / 120, { ...baseInput, ollieHeld: true });
+      skater.update(1 / 120, baseInput);
+      return airtimeOf(skater, world);
+    };
+    expect(jump(0.4)).toBeGreaterThan(jump(0.02) * 1.3);
+    expect(jump(0.8)).toBeCloseTo(jump(0.4), 1);
+  });
+
+  it('crouches while held', () => {
+    const world = makeWorld();
+    const skater = new Skater(world, { x: 0, y: 0.9, z: 0 });
+    skater.update(0.2, { ...baseInput, ollieHeld: true });
+    expect(skater.crouch).toBeGreaterThan(0.4);
+    expect(skater.isGrounded).toBe(true);
+  });
+});
+
+describe('Spins and fakie', () => {
+  it('spins at 540 degrees per second while Q or E is held in the air', () => {
+    const world = makeWorld();
+    const skater = new Skater(world, { x: 0, y: 0.9, z: 0 });
+    skater.startFlip('kickflip');
+    skater.update(0.2, { ...baseInput, spinLeft: true });
+    expect(skater.spinAngle).toBeCloseTo(Math.PI * 0.6, 2);
+  });
+
+  it('reports half turns and residual at touchdown, and a landed 180 rides fakie', () => {
+    const world = makeWorld();
+    const skater = new Skater(world, { x: 0, y: 0.9, z: 0 });
+    skater.update(1 / 120, { ...baseInput, ollieHeld: true });
+    skater.update(1 / 120, baseInput);
+    // 1/3 s of spin is exactly 180 degrees
+    for (let t = 0; t < 1 / 3 - 1e-9; t += 1 / 120) skater.update(1 / 120, { ...baseInput, spinRight: true });
+    airtimeOf(skater, world);
+    const landing = skater.consumeLanding()!;
+    expect(landing.halfTurns).toBe(-1);
+    expect(Math.abs(landing.snapshot.spinResidualDeg)).toBeLessThan(5);
+    skater.landClean(landing.halfTurns);
+    expect(skater.fakie).toBe(true);
+    expect(skater.spinAngle).toBe(0);
+  });
+});
+
+describe('Landing snapshot', () => {
+  it('flags a flip thrown too late to finish turning', () => {
+    const world = makeWorld();
+    const skater = new Skater(world, { x: 0, y: 0.9, z: 0 });
+    skater.update(1 / 120, { ...baseInput, ollieHeld: true });
+    skater.update(1 / 120, baseInput);
+    // Fall until just above the ground, then throw the flip
+    let prevY = skater.position.y, falling = false;
+    while (skater.isAirborne && !(falling && skater.position.y < 1.05)) {
+      skater.update(1 / 120, baseInput);
+      falling = skater.position.y < prevY;
+      prevY = skater.position.y;
+    }
+    expect(skater.startFlip('kickflip')).toBe(true);
+    airtimeOf(skater, world);
+    const p = skater.consumeLanding()!.snapshot.flipProgress;
+    expect(p).not.toBeNull();
+    expect(p!).toBeLessThan(0.85);
+  });
+
+  it('records grab ticks and a grab still held at touchdown', () => {
+    const world = makeWorld();
+    const skater = new Skater(world, { x: 0, y: 0.9, z: 0 });
+    skater.update(1 / 120, { ...baseInput, ollieHeld: true });
+    skater.update(1 / 120, baseInput);
+    expect(skater.startGrab('indy')).toBe(true);
+    airtimeOf(skater, world);
+    const landing = skater.consumeLanding()!;
+    expect(landing.snapshot.grabHeld).toBe(true);
+    expect(landing.grabTicks).toBeGreaterThan(2);
+    expect(landing.airTricks).toEqual(['indy']);
+  });
+
+  it('measures the drop from the highest point', () => {
+    const world = makeWorld();
+    const skater = new Skater(world, { x: 0, y: 4.9, z: 0 });
+    skater.update(1 / 120, baseInput);
+    airtimeOf(skater, world, { ollieHeld: true });
+    const s = skater.consumeLanding()!.snapshot;
+    expect(s.dropHeight).toBeCloseTo(4, 1);
+    expect(s.crouched).toBe(true);
+  });
+
+  it('reports a hard wall hit with speed before and after', () => {
+    const world = makeWorld();
+    addBox(world, 0, -6, 2, 4, 1);
+    const skater = new Skater(world, { x: 0, y: 0.9, z: 0 });
+    let hit: { before: number; after: number } | null = null;
+    for (let i = 0; i < 240 && !hit; i++) { skater.update(1 / 60, { ...baseInput, forward: true }); hit = skater.consumeWallHit(); }
+    expect(hit!.before).toBeGreaterThan(3);
+    expect(hit!.after).toBeLessThan(hit!.before * 0.3);
+  });
+});
+
+describe('Manual', () => {
+  it('fails when the balance is ignored, and blocks pushing meanwhile', () => {
+    const world = makeWorld();
+    const skater = new Skater(world, { x: 0, y: 0.9, z: 0 });
+    ride(world, skater, 90);
+    expect(skater.startManual('manual')).toBe(true);
+    let failed = false;
+    for (let i = 0; i < 900 && !failed; i++) { skater.update(1 / 60, baseInput); failed = skater.consumeManualFail(); }
+    expect(failed || skater.manualTrick === null).toBe(true);
+  });
+
+  it('pops out of a manual with Space', () => {
+    const world = makeWorld();
+    const skater = new Skater(world, { x: 0, y: 0.9, z: 0 });
+    ride(world, skater, 90);
+    skater.startManual('manual');
+    skater.update(1 / 60, { ...baseInput, ollieHeld: true });
+    skater.update(1 / 60, baseInput);
+    expect(skater.manualTrick).toBeNull();
+    expect(skater.isAirborne).toBe(true);
+  });
+});
+
+describe('Clearing held state', () => {
+  it('drops a held grab and a charge (zone switch)', () => {
+    const world = makeWorld();
+    const skater = new Skater(world, { x: 0, y: 0.9, z: 0 });
+    skater.update(0.2, { ...baseInput, ollieHeld: true });
+    skater.clearHeld();
+    expect(skater.crouch).toBe(0);
+    skater.update(1 / 60, baseInput);
+    expect(skater.isGrounded).toBe(true);
   });
 });

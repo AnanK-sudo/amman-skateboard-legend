@@ -17,6 +17,12 @@ export class InputManager {
     this.justReleasedKeys.add(code);
   };
 
+  private buttons = new Set<number>();
+  private onMouseDown = (e: Event) => { this.buttons.add((e as MouseEvent).button); };
+  private onMouseUp = (e: Event) => { this.buttons.delete((e as MouseEvent).button); };
+  // Right mouse is free-look, so its menu would get in the way
+  private onContextMenu = (e: Event) => { e.preventDefault(); };
+
   private onMouseMove = (e: Event) => {
     const me = e as MouseEvent;
     this._mouseDelta.x += me.movementX;
@@ -28,6 +34,9 @@ export class InputManager {
     target.addEventListener('keydown', this.onKeyDown);
     target.addEventListener('keyup', this.onKeyUp);
     target.addEventListener('mousemove', this.onMouseMove);
+    target.addEventListener('mousedown', this.onMouseDown);
+    target.addEventListener('mouseup', this.onMouseUp);
+    target.addEventListener('contextmenu', this.onContextMenu);
   }
 
   detach(): void {
@@ -35,6 +44,9 @@ export class InputManager {
     this.target.removeEventListener('keydown', this.onKeyDown);
     this.target.removeEventListener('keyup', this.onKeyUp);
     this.target.removeEventListener('mousemove', this.onMouseMove);
+    this.target.removeEventListener('mousedown', this.onMouseDown);
+    this.target.removeEventListener('mouseup', this.onMouseUp);
+    this.target.removeEventListener('contextmenu', this.onContextMenu);
     this.target = null;
     this.keys.clear();
   }
@@ -43,6 +55,7 @@ export class InputManager {
   justPressed(code: string): boolean { return this.justPressedKeys.has(code); }
   justReleased(code: string): boolean { return this.justReleasedKeys.has(code); }
   get mouseDelta(): { x: number; y: number } { return this._mouseDelta; }
+  isMouseDown(button: number): boolean { return this.buttons.has(button); }
 
   update(): void {
     this.justPressedKeys.clear();

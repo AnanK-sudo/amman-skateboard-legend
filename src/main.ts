@@ -9,6 +9,13 @@ import { Engine } from '@/core/Engine';
 import { InputManager } from '@/core/InputManager';
 import { PhysicsWorld } from '@/core/PhysicsWorld';
 import { Skater, SkaterInput } from '@/player/Skater';
+import { RiderMode } from '@/player/RiderMode';
+import { Board } from '@/player/board/Board';
+import { Walker } from '@/player/Walker';
+import { readTricks } from '@/player/tricks/TrickInput';
+import { judgeLanding, judgeWallHit, type BailReason } from '@/player/LandingJudge';
+import { newlyUnlocked } from '@/progression/DeckUnlocks';
+import { DECKS, deckById } from '@/world/decks';
 import { FollowCamera } from '@/player/Camera';
 import { TrickSystem } from '@/player/TrickSystem';
 import { ZoneManager } from '@/world/ZoneManager';
@@ -117,10 +124,12 @@ let currentZoneIndex = 0;
 
 // --- Skater --- (must be after zone load so grindables can be registered after)
 const skater = new Skater(physics.world, zoneManager.getZone(zoneIds[0])!.config.spawnPoint);
-scene.add(skater.mesh);
+const board = new Board();
+const walker = new Walker();
+const riderMode = new RiderMode(skater, board, walker);
 
 // --- Animated skater model (FBX, loads async) ---
-const skaterModel = new SkaterModel(scene, skater.mesh);
+const skaterModel = new SkaterModel(scene);
 
 // --- Grind Detector ---
 const grindDetector = new GrindDetector();
@@ -249,13 +258,12 @@ composer.addPass(new EffectPass(followCam.camera,
 composer.addPass(new EffectPass(followCam.camera, smaaEffect));
 
 // DOF auto-tracks the skater -- reads this Vector3 reference each frame
-dofEffect.target = skater.mesh.position;
+dofEffect.target = skaterModel.group.position;
 
 // --- Input ---
 const input = new InputManager();
 input.attach(document);
 
-canvas.addEventListener('click', () => { canvas.requestPointerLock(); });
 
 function getSkaterInput(): SkaterInput {
   return {
@@ -263,13 +271,9 @@ function getSkaterInput(): SkaterInput {
     backward: input.isDown('KeyS'),
     left: input.isDown('KeyA'),
     right: input.isDown('KeyD'),
-    ollie: input.justPressed('Space'),
-    trick1: input.isDown('KeyJ'),
-    trick2: input.isDown('KeyK'),
-    grind: input.isDown('KeyF'),
-    grab: input.isDown('KeyL'),
-    manual: input.isDown('ShiftLeft') || input.isDown('ShiftRight'),
-    cameraYaw: followCam.getCameraYaw(),
+    ollieHeld: input.isDown('Space'),
+    spinLeft: input.isDown('KeyQ'),
+    spinRight: input.isDown('KeyE'),
   };
 }
 
@@ -311,7 +315,6 @@ hud.updateScore(totalScore);
 let ollieTime = 0;
 let didOllie = false;
 let spinRegistered = false;
-let wasAirborne = false;
 let grindDistanceAccum = 0; // meters ground during current grind, for challenge tracking
 
 // --- Engine (declared early so menus can reference it) ---
@@ -322,12 +325,10 @@ const pauseMenu = new PauseMenu({
   onResume: () => {
     pauseMenu.hide();
     engine.resume();
-    canvas.requestPointerLock();
   },
   onRestart: () => {
     pauseMenu.hide();
     engine.resume();
-    canvas.requestPointerLock();
   },
   onQuitToMenu: () => {
     pauseMenu.hide();
@@ -343,29 +344,19 @@ const pauseMenu = new PauseMenu({
 const mainMenu = new MainMenu({
   onPlay: () => {
     engine.resume();
-    canvas.requestPointerLock();
   },
 });
 
 // Customize menu — DONE returns to pause menu
 const customizeMenu = new CustomizeMenu(customization, () => {
-  // Apply style to skater — safely traverse to find groups
-  try {
-    // mesh → stanceGroup (children[0]) → innerGroup (children[0])
-    const stance = skater.mesh.children[0] as THREE.Group;
-    const inner  = stance?.children[0] as THREE.Group;
-    if (!inner) return;
-    // boardGroup is the last Group child of innerGroup
-    let board: THREE.Group | null = null;
-    for (let i = inner.children.length - 1; i >= 0; i--) {
-      if (inner.children[i] instanceof THREE.Group) {
-        board = inner.children[i] as THREE.Group;
-        break;
-      }
-    }
-    if (board) customization.applyToSkater(inner, board);
-  } catch (e) { console.warn('Customize apply failed:', e); }
+  skaterModel.setBodyColor(customization.getStyle().shirtColor);
 });
+customizeMenu.addDeckRow(DECKS, () => save.unlockedBoards, save.equippedBoard, (id) => {
+  save.equippedBoard = id;
+  SaveManager.save(save);
+  skaterModel.setDeck(id);
+});
+skaterModel.setDeck(save.equippedBoard);
 customizeMenu.addStanceToggle(save.stance, (stance) => {
   save.stance = stance;
   SaveManager.save(save);
@@ -383,6 +374,74 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
+let wasManual = false;
+
+/** Rider and board separate; the combo is lost */
+function bail(reason: BailReason): void {
+  riderMode.bail(reason);
+  skater.setGrinding(null);
+  wasManual = false;
+  trickSystem.bail();
+  hud.updateCombo([], 0, 0);
+  hud.flashTrick('BAIL', 0);
+  audio.playBail();
+  cameraShake.trigger(0.4);
+  stats.onBail();
+  comboTimer.stop();
+  if (grindSound) { grindSound.stop(); grindSound = null; }
+}
+
+/** Challenges, stats, the trick flash and the combo timer for every newly landed trick */
+function reportLanded(): void {
+  for (const t of trickSystem.consumeLanded()) {
+    for (const id of t.ids) {
+      challengeManager.onTrickLanded(id);
+      stats.onTrickLanded(id);
+    }
+    hud.flashTrick(t.name, t.points);
+    if (!comboTimer.active) comboTimer.start();
+    else comboTimer.extend(1.5);
+  }
+}
+
+function checkDecks(): void {
+  for (const id of newlyUnlocked({
+    completed: challengeManager.completedIds,
+    allChallenges: CHALLENGES.map(c => c.id),
+    bestCombo: save.bestCombo,
+    owned: save.unlockedBoards,
+  })) {
+    save.unlockedBoards.push(id);
+    hud.flashTag(`DECK UNLOCKED: ${deckById(id).name.toUpperCase()}`);
+  }
+  customizeMenu.refreshDecks();
+}
+
+function cashOut(): void {
+  if (!trickSystem.comboActive) return;
+  const links = trickSystem.comboChain.length;
+  const comboScore = trickSystem.cashOut();
+  if (comboScore <= 0) return;
+  totalScore += comboScore;
+  hud.updateScore(totalScore);
+  hud.updateCombo([], 0, 0);
+  comboTimer.stop();
+  challengeManager.onComboCashed(comboScore);
+  stats.onComboCashed(comboScore, links);
+  audio.playScoreDing();
+  cameraShake.trigger(0.08);
+  if (comboScore >= 3000) slowMo.trigger(0.6);
+  const zoneId = zoneIds[currentZoneIndex];
+  if (stats.checkZoneBest(zoneId, totalScore, comboScore, 0)) hud.flashNewBest();
+  save.highScore = Math.max(save.highScore, totalScore);
+  save.bestCombo = Math.max(save.bestCombo, comboScore);
+  save.completedChallenges = challengeManager.completedIds;
+  save.unlockedZones = unlockManager.unlockedZones;
+  unlockManager.updateCompleted(challengeManager.completedIds);
+  checkDecks();
+  SaveManager.save(save);
+}
+
 engine = new Engine({
   update: (rawDelta) => {
     // Apply slow-mo time scale
@@ -393,15 +452,13 @@ engine = new Engine({
       if (pauseMenu.isVisible) {
         pauseMenu.hide();
         engine.resume();
-        canvas.requestPointerLock();
-      } else if (customizeMenu.isVisible) {
+          } else if (customizeMenu.isVisible) {
         customizeMenu.hide();
         engine.resume();
       } else {
         pauseMenu.updateStats(stats.getSession());
         pauseMenu.show();
         engine.pause();
-        document.exitPointerLock();
       }
       input.update(); // consume input
       return;
@@ -427,233 +484,126 @@ engine = new Engine({
         registerGrindables();
         hud.updateZone(zone.config.name);
         const spawn = zone.config.spawnPoint;
-        skater.body.position.set(spawn.x, spawn.y, spawn.z);
-        skater.body.velocity.setZero();
+        riderMode.resetToSpawn({ x: spawn.x, y: spawn.y - 0.9, z: spawn.z }, Math.PI);
+        skater.setGrinding(null);
         engine.resume();
       });
     }
 
-    // --- Camera & physics ---
-    followCam.handleMouseInput(input.mouseDelta.x, input.mouseDelta.y);
-    skater.update(delta, getSkaterInput());
-    skaterModel.update(delta, {
-      position:      skater.position,
-      yaw:           skater.yaw,
-      speed:         skater.speed,
-      maxSpeed:      skater.maxSpeed,
-      isGrounded:    skater.isGrounded,
-      isBailing:     skater.isBailing,
-      bailProgress:  skater.bailProgress,
-      shock:         skater.shock,
-      trick:         skater.trick,
-      trickProgress: skater.trickProgress,
-      pushState:     skater.pushState,
-      turn:          skater.turnInput,
-      braking:       skater.braking,
-      grinding:      grindDetector.isGrinding,
-    });
-    physics.step(delta);
-    followCam.update(delta, skater.position, skater.speed, skater.maxSpeed, skater.yaw, skaterModel.cameraMoment, skaterModel.chestSide);
+    // --- Rider, board and walker ---
+    followCam.freeLook(input.isMouseDown(2), input.mouseDelta.x, input.mouseDelta.y);
+    const riding = riderMode.mode === 'riding';
+    if (riding) {
+      const presses = readTricks(input);
+      if (presses.flip && skater.startFlip(presses.flip)) { audio.playOlliePop(); audio.playFlipSwoosh(); }
+      if (presses.grab) skater.startGrab(presses.grab);
+      if (presses.grabReleased) skater.releaseGrab();
+      if (presses.manual && skater.startManual(presses.manual)) {
+        trickSystem.landTrick(presses.manual);
+        wasManual = true;
+      }
+      const wasGrounded = skater.isGrounded;
+      skater.update(delta, getSkaterInput());
+      if (wasGrounded && skater.isAirborne && input.justReleased('Space')) audio.playOlliePop();
 
-    // --- Trick detection ---
-    // Each trick key is standalone — auto-ollies for you
-    // J = kickflip, K = heelflip, Space = plain ollie
-    // J+K = tre flip, Shift = manual, L = grab (air), A/D in air = spin
-
-    // Captured once so a ground trick's pop doesn't also fire the air branch for the same key press
-    const trickFromGround = skater.isGrounded;
-    if (trickFromGround && !skater.isBailing) {
-      if (input.justPressed('KeyJ') && input.isDown('KeyK')) {
-        trickSystem.landTrick('tre_flip');
-        skater.playTrick('tre_flip');
-        audio.playOlliePop(); audio.playFlipSwoosh();
-      } else if (input.justPressed('KeyJ')) {
-        trickSystem.landTrick('kickflip');
-        skater.playTrick('kickflip');
-        audio.playOlliePop(); audio.playFlipSwoosh();
-      } else if (input.justPressed('KeyK')) {
-        trickSystem.landTrick('heelflip');
-        skater.playTrick('heelflip');
-        audio.playOlliePop(); audio.playFlipSwoosh();
-      } else if (input.justPressed('Space')) {
-        trickSystem.landTrick('ollie');
-        skater.playTrick('ollie');
-        audio.playOlliePop();
+      // --- Grinds: the direction held when locking on picks the grind ---
+      const wasGrinding = grindDetector.isGrinding;
+      const grindResult = grindDetector.update(skater.position, input.isDown('KeyF'), delta);
+      if (grindResult) {
+        skater.body.position.set(grindResult.position.x, grindResult.position.y, grindResult.position.z);
+        if (grindDetector.isGrinding) {
+          grindDistanceAccum += grindDetector.grindSpeed * delta;
+          sparks.emit(grindResult.position.x, grindResult.position.y, grindResult.position.z, 12);
+          if (!grindSound) grindSound = audio.playGrindLoop();
+          if (!wasGrinding) {
+            const type = presses.grind ?? 'fifty_fifty';
+            trickSystem.landTrick(type);
+            skater.setGrinding(type);
+          }
+        }
+      } else {
+        if (wasGrinding && grindDistanceAccum > 0) {
+          challengeManager.onGrindDistance(grindDistanceAccum);
+          grindDistanceAccum = 0;
+        }
+        if (wasGrinding) skater.setGrinding(null);
+        if (grindSound) { grindSound.stop(); grindSound = null; }
       }
 
-      // Shift = manual (ground only)
-      if (input.justPressed('ShiftLeft') || input.justPressed('ShiftRight')) {
-        trickSystem.landTrick('manual');
-        skater.playTrick('manual');
-      }
-    }
-
-    // --- Air tricks ---
-    if (!trickFromGround) {
-      // L = grab
-      if (input.justPressed('KeyL')) {
-        trickSystem.landTrick('grab');
-        skater.playTrick('grab');
-      }
-
-      // J in air = kickflip
-      if (input.justPressed('KeyJ')) {
-        trickSystem.landTrick('kickflip');
-        skater.playTrick('kickflip');
-      }
-
-      // K in air = heelflip
-      if (input.justPressed('KeyK')) {
-        trickSystem.landTrick('heelflip');
-        skater.playTrick('heelflip');
-      }
-    }
-
-    // Spin in air: A=180, D=360, A+D=540
-    if (!skater.isGrounded && !spinRegistered) {
-      const spinA = input.justPressed('KeyA');
-      const spinD = input.justPressed('KeyD');
-      if (spinA && input.isDown('KeyD')) {
-        trickSystem.landTrick('spin_540');
-        skater.playTrick('spin');
-        spinRegistered = true;
-      } else if (spinD && input.isDown('KeyA')) {
-        trickSystem.landTrick('spin_540');
-        skater.playTrick('spin');
-        spinRegistered = true;
-      } else if (spinA) {
-        trickSystem.landTrick('spin_180');
-        skater.playTrick('spin');
-        spinRegistered = true;
-      } else if (spinD) {
-        trickSystem.landTrick('spin_360');
-        skater.playTrick('spin');
-        spinRegistered = true;
-      }
-    }
-    if (skater.isGrounded) spinRegistered = false;
-
-    // --- Grind detection ---
-    const wasGrinding = grindDetector.isGrinding;
-    const grindResult = grindDetector.update(
-      skater.position,
-      input.isDown('KeyF'),
-      delta
-    );
-    if (grindResult) {
-      skater.body.position.set(grindResult.position.x, grindResult.position.y, grindResult.position.z);
-      if (grindDetector.isGrinding) {
-        grindDistanceAccum += grindDetector.grindSpeed * delta;
-        // Sparks while grinding — 12 per frame (white-hot core + orange spray)
-        sparks.emit(grindResult.position.x, grindResult.position.y, grindResult.position.z, 12);
-        // Start grind sound
-        if (!grindSound) grindSound = audio.playGrindLoop();
-        // Register trick once at grind start
-        if (!wasGrinding) {
-          trickSystem.landTrick('fifty_fifty');
-          skater.playTrick('manual');
+      // --- Bails: botched landings, hard wall hits, lost manuals ---
+      const wallHit = skater.consumeWallHit();
+      const wallBail = wallHit ? judgeWallHit(wallHit.before, wallHit.after) : null;
+      if (wallBail) bail(wallBail);
+      else if (skater.consumeManualFail()) bail('manual');
+      else {
+        const landing = skater.consumeLanding();
+        if (landing) {
+          audio.playLand(0.5);
+          cameraShake.trigger(0.15);
+          emitDust(skater.position.x, skater.position.y - 0.85, skater.position.z);
+          const verdict = judgeLanding(landing.snapshot);
+          if (!verdict.clean) bail(verdict.reason);
+          else {
+            const fakieBefore = skater.fakie;
+            trickSystem.landAir(landing, fakieBefore);
+            skater.landClean(landing.halfTurns);
+            if (skater.fakie !== fakieBefore) hud.flashTag(skater.fakie ? 'FAKIE' : 'REGULAR');
+            reportLanded();
+            cashOut();
+          }
+        }
+        // A manual ridden out cleanly banks its combo
+        if (wasManual && skater.manualTrick === null && skater.isGrounded) {
+          wasManual = false;
+          reportLanded();
+          cashOut();
         }
       }
     } else {
-      // Grind just ended — report distance to challenges
-      if (wasGrinding && grindDistanceAccum > 0) {
-        challengeManager.onGrindDistance(grindDistanceAccum);
-        grindDistanceAccum = 0;
-      }
-      // Stop grind sound when not grinding
-      if (grindSound) { grindSound.stop(); grindSound = null; }
+      riderMode.update(delta, {
+        walk: {
+          forward: input.isDown('KeyW'), back: input.isDown('KeyS'),
+          left: input.isDown('KeyA'), right: input.isDown('KeyD'),
+          jog: input.isDown('ShiftLeft') || input.isDown('ShiftRight'),
+        },
+        mount: input.justPressed('KeyE'),
+      }, followCam.getCameraYaw(), physics.world);
     }
+    reportLanded();
+    hud.setPrompt(riderMode.canMount ? 'E: HOP ON' : null);
+    hud.setBalance(riderMode.mode === 'riding' ? skater.manualBalance : null);
 
-    // Notify systems of tricks landed — consume so it only fires once per landing
-    const justLanded = trickSystem.consumeLastTrick();
-    if (justLanded) {
-      challengeManager.onTrickLanded(justLanded);
-      stats.onTrickLanded(justLanded);
-      // Start or extend combo timer
-      if (!comboTimer.active) comboTimer.start();
-      else comboTimer.extend(1.5);
-    }
+    const pose = riderMode.pose();
+    const focus = new THREE.Vector3(pose.feet.x, pose.feet.y + 0.9, pose.feet.z);
+    skaterModel.update(delta, {
+      mode: riderMode.mode, feet: pose.feet, yaw: pose.yaw,
+      speed: skater.speed, maxSpeed: skater.maxSpeed, isGrounded: skater.isGrounded, shock: skater.shock,
+      trick: skater.trick, trickProgress: skater.trickProgress, pushState: skater.pushState,
+      turn: skater.turnInput, braking: skater.braking,
+      grinding: riding && grindDetector.isGrinding, grindType: skater.grindType,
+      crouch: skater.crouch, manualBalance: skater.manualBalance, spinAngle: skater.spinAngle, fakie: skater.fakie,
+      bailReason: riderMode.bailReason, bailProgress: riderMode.bailProgress, mountProgress: riderMode.mountProgress,
+      walkSpeed: walker.speed, stridePhase: walker.stridePhase,
+      board: { position: board.position, yaw: board.yaw, wheelsUp: board.wheelsUp, speed: Math.hypot(board.velocity.x, board.velocity.z) },
+    });
+    physics.step(delta);
+    const camMode = riding ? 'ride' : riderMode.mode === 'bailing' ? 'bail' : 'walk';
+    followCam.update(delta, focus, riding ? skater.speed : 0, skater.maxSpeed, pose.yaw, skaterModel.cameraMoment, skaterModel.chestSide, camMode);
 
     // --- Combo timer ---
     comboTimer.update(delta);
     if (comboTimer.expired && trickSystem.comboActive) {
-      // Timer ran out — lose combo
       trickSystem.bail();
       hud.updateCombo([], 0, 0);
       hud.flashTrick('TIMEOUT', 0);
       comboTimer.stop();
     }
-
-    // --- HUD combo display ---
     if (trickSystem.comboActive) {
       hud.updateCombo(trickSystem.comboChain, trickSystem.comboMultiplier, trickSystem.comboScore);
     }
 
-    // --- Trick flash (use justLanded — already consumed above) ---
-    if (justLanded) {
-      hud.flashTrick(justLanded, trickSystem.getBaseScore(justLanded));
-    }
-
     // --- Combo cash out (Enter) ---
-    if (input.justPressed('Enter') && trickSystem.comboActive) {
-      const comboScore = trickSystem.cashOut();
-      totalScore += comboScore;
-      hud.updateScore(totalScore);
-      hud.updateCombo([], 0, 0);
-      challengeManager.onComboCashed(comboScore);
-
-      // Persist to save
-      save.highScore = Math.max(save.highScore, totalScore);
-      save.completedChallenges = challengeManager.completedIds;
-      save.unlockedZones = unlockManager.unlockedZones;
-      unlockManager.updateCompleted(challengeManager.completedIds);
-      SaveManager.save(save);
-    }
-
-    // --- Landing detection (skip while bailing — bail manages its own airborne state) ---
-    if (wasAirborne && skater.isGrounded && !skater.isBailing) {
-      audio.playLand(0.5);
-      cameraShake.trigger(0.15);
-      emitDust(skater.position.x, 0.05, skater.position.z);
-      emitDust(skater.position.x, 0.05, skater.position.z);
-
-      // Bail check: high speed landing from height = bail (20% chance at high speed)
-      if (skater.speed > 10 && Math.random() < 0.15) {
-        skater.triggerBail();
-        trickSystem.bail();
-        hud.updateCombo([], 0, 0);
-        hud.flashTrick('BAIL', 0);
-        audio.playBail();
-        cameraShake.trigger(0.4);
-        stats.onBail();
-      } else if (trickSystem.comboActive) {
-        const comboScore = trickSystem.cashOut();
-        if (comboScore > 0) {
-          totalScore += comboScore;
-          hud.updateScore(totalScore);
-          hud.updateCombo([], 0, 0);
-          comboTimer.stop();
-          challengeManager.onComboCashed(comboScore);
-          stats.onComboCashed(comboScore, trickSystem.comboChain.length);
-          audio.playScoreDing();
-          cameraShake.trigger(0.08);
-          // Slow-mo on big combos
-          if (comboScore >= 3000) slowMo.trigger(0.6);
-          // Check for new personal best
-          const zoneId = zoneIds[currentZoneIndex];
-          if (stats.checkZoneBest(zoneId, totalScore, comboScore, 0)) {
-            hud.flashNewBest();
-          }
-          save.highScore = Math.max(save.highScore, totalScore);
-          save.completedChallenges = challengeManager.completedIds;
-          save.unlockedZones = unlockManager.unlockedZones;
-          unlockManager.updateCompleted(challengeManager.completedIds);
-          SaveManager.save(save);
-        }
-      }
-    }
-    // Always update wasAirborne so it's never stale after bail ends
-    if (!skater.isBailing) wasAirborne = !skater.isGrounded;
+    if (input.justPressed('Enter') && trickSystem.comboActive) cashOut();
 
     // --- Speed HUD + cinematic speed effects ---
     hud.updateSpeed(skater.speed / skater.maxSpeed);
@@ -666,17 +616,17 @@ engine = new Engine({
     const shakeOffset = cameraShake.update(delta);
     followCam.camera.position.add(shakeOffset);
     // Speed lines intensity based on speed
-    const speedRatio = skater.speed / skater.maxSpeed;
+    const speedRatio = riding ? skater.speed / skater.maxSpeed : 0;
     speedLinesEl.style.opacity = speedRatio > 0.5 ? String((speedRatio - 0.5) * 2 * 0.6) : '0';
 
     // Board trail
-    boardTrail.update(skater.position, skater.speed);
+    boardTrail.update(focus, riding ? skater.speed : 0);
 
     // Minimap
-    minimap.update(skater.position.x, skater.position.z, skater.yaw);
+    minimap.update(focus.x, focus.z, pose.yaw);
 
     // --- Rolling sound ---
-    if (skater.isGrounded && skater.speed > 0.5) {
+    if (riding && skater.isGrounded && skater.speed > 0.5) {
       if (!rollSound) rollSound = audio.playRollLoop();
       rollSound?.update(skater.speed);
     } else {
@@ -684,14 +634,14 @@ engine = new Engine({
     }
 
     // --- Blob shadow follows skater ---
-    blobShadow.position.set(skater.position.x, 0.02, skater.position.z);
+    blobShadow.position.set(focus.x, 0.02, focus.z);
     // Scale shadow based on height (smaller when higher = further from ground)
-    const shadowScale = Math.max(0.3, 1 - (skater.position.y - 0.9) * 0.15);
+    const shadowScale = Math.max(0.3, 1 - (focus.y - 0.9) * 0.15);
     blobShadow.scale.set(shadowScale, shadowScale, shadowScale);
 
     // --- Dust particles update ---
-    if (skater.speed > 2 && skater.isGrounded && Math.random() < 0.3) {
-      emitDust(skater.position.x, 0.05, skater.position.z);
+    if (riding && skater.speed > 2 && skater.isGrounded && Math.random() < 0.3) {
+      emitDust(focus.x, pose.feet.y + 0.05, focus.z);
     }
     for (let i = 0; i < dustCount; i++) {
       if (dustLifetimes[i] > 0) {
@@ -710,11 +660,10 @@ engine = new Engine({
 
     // --- World boundary (keep skater in play area) ---
     const boundary = 38;
-    const pos = skater.body.position;
-    if (pos.x > boundary) pos.x = boundary;
-    if (pos.x < -boundary) pos.x = -boundary;
-    if (pos.z > boundary) pos.z = boundary;
-    if (pos.z < -boundary) pos.z = -boundary;
+    for (const pos of [skater.body.position, walker.position]) {
+      pos.x = Math.max(-boundary, Math.min(boundary, pos.x));
+      pos.z = Math.max(-boundary, Math.min(boundary, pos.z));
+    }
 
     input.update();
   },

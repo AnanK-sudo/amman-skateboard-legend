@@ -386,4 +386,59 @@ export class HUD {
     }, 1500);
     setTimeout(() => el.remove(), 2200);
   }
+
+  private promptEl: HTMLElement | null = null;
+  private balanceEl: HTMLElement | null = null;
+  private balanceNeedle: HTMLElement | null = null;
+
+  /** Centre-bottom hint such as "E: hop on"; null hides it */
+  setPrompt(text: string | null): void {
+    if (!this.promptEl) {
+      this.promptEl = document.createElement('div');
+      Object.assign(this.promptEl.style, {
+        position: 'absolute', bottom: '22%', left: '50%', transform: 'translateX(-50%)',
+        fontFamily: '"Impact", "Arial Black", sans-serif', fontSize: '26px', color: '#fff',
+        letterSpacing: '3px', textShadow: '2px 2px 0 #ff6b35', pointerEvents: 'none', zIndex: '40',
+      });
+      this.root.appendChild(this.promptEl);
+    }
+    this.promptEl.textContent = text ?? '';
+    this.promptEl.style.display = text ? 'block' : 'none';
+  }
+
+  /** Manual balance needle, -1 back to 1 front; null hides the bar */
+  setBalance(value: number | null): void {
+    if (!this.balanceEl) {
+      this.balanceEl = document.createElement('div');
+      Object.assign(this.balanceEl.style, {
+        position: 'absolute', bottom: '30%', left: '50%', width: '220px', height: '10px', marginLeft: '-110px',
+        background: 'linear-gradient(90deg, #e63946, #ffd166 30%, #3fb950 45%, #3fb950 55%, #ffd166 70%, #e63946)',
+        borderRadius: '5px', pointerEvents: 'none', zIndex: '40',
+      });
+      this.balanceNeedle = document.createElement('div');
+      Object.assign(this.balanceNeedle.style, {
+        position: 'absolute', top: '-5px', width: '4px', height: '20px', background: '#fff', borderRadius: '2px',
+      });
+      this.balanceEl.appendChild(this.balanceNeedle);
+      this.root.appendChild(this.balanceEl);
+    }
+    this.balanceEl.style.display = value === null ? 'none' : 'block';
+    if (value !== null) this.balanceNeedle!.style.left = `${(Math.max(-1, Math.min(1, value)) * 0.5 + 0.5) * 216}px`;
+  }
+
+  /** Short banner under the trick flash (FAKIE, deck unlocks) */
+  flashTag(text: string): void {
+    const el = document.createElement('div');
+    el.textContent = text;
+    Object.assign(el.style, {
+      position: 'absolute', top: '38%', left: '50%', transform: 'translateX(-50%)',
+      fontFamily: '"Impact", "Arial Black", sans-serif', fontSize: '24px', color: '#a8dadc',
+      letterSpacing: '4px', textShadow: '2px 2px 0 rgba(0,0,0,0.6)', transition: 'opacity 0.6s ease',
+      pointerEvents: 'none', zIndex: '45',
+    });
+    this.root.appendChild(el);
+    setTimeout(() => { el.style.opacity = '0'; }, 1600);
+    setTimeout(() => el.remove(), 2300);
+  }
 }
+
