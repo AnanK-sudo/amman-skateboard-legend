@@ -47,4 +47,16 @@ describe('Board mesh', () => {
     rig.setDeck(DECKS[4]);
     expect(((rig.wheels[0].material) as THREE.MeshStandardMaterial).color.getHex()).toBe(DECKS[4].wheelColor);
   });
+
+  it('faces the grip up and the graphic down', () => {
+    const rig = buildBoard(DECKS[0]);
+    const normalY = (m: THREE.Mesh) => {
+      const n = m.geometry.getAttribute('normal');
+      let sum = 0;
+      for (let i = 0; i < n.count; i++) sum += n.getY(i);
+      return sum / n.count;
+    };
+    expect(normalY(rig.deck.children[0] as THREE.Mesh)).toBeGreaterThan(0.5);
+    expect(normalY(rig.deck.children[1] as THREE.Mesh)).toBeLessThan(-0.5);
+  });
 });

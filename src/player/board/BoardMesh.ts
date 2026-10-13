@@ -196,8 +196,8 @@ export function buildBoard(deckDef: DeckDef): BoardRig {
   const bushing = new THREE.MeshStandardMaterial({ color: 0xd65a31, roughness: 0.7 });
   const wheelMat = new THREE.MeshStandardMaterial({ color: deckDef.wheelColor, roughness: 0.55 });
 
-  const top = new THREE.Mesh(deckSurface(BOARD.DECK_TOP, false), gripMat);
-  const bottom = new THREE.Mesh(deckSurface(BOARD.DECK_BOTTOM, true), graphicMat);
+  const top = new THREE.Mesh(deckSurface(BOARD.DECK_TOP, true), gripMat);
+  const bottom = new THREE.Mesh(deckSurface(BOARD.DECK_BOTTOM, false), graphicMat);
   const edge = new THREE.Mesh(deckEdge(), plyMat);
   for (const m of [top, bottom, edge]) { m.castShadow = true; m.receiveShadow = true; deck.add(m); }
 
